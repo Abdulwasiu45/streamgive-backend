@@ -18,6 +18,7 @@ const EXPECTED_TABLES: [string, string[]][] = [
   ['streams',              ['id', 'on_chain_id', 'donor_id', 'ngo_id', 'token_address', 'rate', 'last_rate', 'balance', 'withdrawn', 'status', 'created_tx_hash', 'created_at', 'updated_at']],
   ['ngo_applications',     ['id', 'owner_address', 'name', 'description', 'website', 'contact_email', 'country', 'status', 'review_note', 'created_at', 'updated_at']],
   ['ngo_application_challenges', ['challenge', 'owner_address', 'expires_at']],
+  ['ngo_application_contact_challenges', ['token_hash', 'application_id', 'expires_at', 'created_at']],
   ['notification_logs',    ['id', 'event_id', 'event_type', 'channel', 'success', 'error', 'created_at']],
   ['notification_endpoints', ['id', 'url', 'secret', 'event_types', 'enabled', 'created_at', 'updated_at']],
   ['indexer_checkpoints',  ['id', 'last_ledger', 'last_event_id', 'updated_at']],

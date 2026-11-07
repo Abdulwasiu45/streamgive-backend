@@ -997,7 +997,7 @@ describe('PATCH /admin/ngos/:id', () => {
 
     const response = await app.inject({
       method: 'PATCH',
-      url: `/admin/ngos/${ngo.id}`,
+      url: `/v1/admin/ngos/${ngo.id}`,
       payload: { displayName: 'Updated Name' },
     });
 
@@ -1010,8 +1010,14 @@ describe('PATCH /admin/ngos/:id', () => {
     const app = buildServer();
 
     const unknownId = '00000000-0000-0000-0000-000000000000';
-    const url = `/admin/ngos/${unknownId}`;
-    const headers = signAdminRequest(adminKeypair, 'PATCH', url);
+    const url = `/v1/admin/ngos/${unknownId}`;
+    const headers = signAdminRequest(
+      adminKeypair,
+      'PATCH',
+      url,
+      undefined,
+      JSON.stringify({ displayName: 'Updated Name' }),
+    );
 
     const response = await app.inject({
       method: 'PATCH',
@@ -1029,8 +1035,14 @@ describe('PATCH /admin/ngos/:id', () => {
   it('returns 400 for a malformed (non-UUID) id', async () => {
     const app = buildServer();
 
-    const url = '/admin/ngos/not-a-valid-uuid';
-    const headers = signAdminRequest(adminKeypair, 'PATCH', url);
+    const url = '/v1/admin/ngos/not-a-valid-uuid';
+    const headers = signAdminRequest(
+      adminKeypair,
+      'PATCH',
+      url,
+      undefined,
+      JSON.stringify({ displayName: 'Updated Name' }),
+    );
 
     const response = await app.inject({
       method: 'PATCH',
@@ -1052,8 +1064,14 @@ describe('PATCH /admin/ngos/:id', () => {
       data: { ownerAddress: fakeAddress('B'), name: 'Original Name', verified: true },
     });
 
-    const url = `/admin/ngos/${ngo.id}`;
-    const headers = signAdminRequest(adminKeypair, 'PATCH', url);
+    const url = `/v1/admin/ngos/${ngo.id}`;
+    const headers = signAdminRequest(
+      adminKeypair,
+      'PATCH',
+      url,
+      undefined,
+      JSON.stringify({ displayName: 'Curated Public Name' }),
+    );
 
     const response = await app.inject({
       method: 'PATCH',
@@ -1089,8 +1107,14 @@ describe('PATCH /admin/ngos/:id', () => {
       },
     });
 
-    const url = `/admin/ngos/${ngo.id}`;
-    const headers = signAdminRequest(adminKeypair, 'PATCH', url);
+    const url = `/v1/admin/ngos/${ngo.id}`;
+    const headers = signAdminRequest(
+      adminKeypair,
+      'PATCH',
+      url,
+      undefined,
+      JSON.stringify({ displayName: null }),
+    );
 
     const response = await app.inject({
       method: 'PATCH',
@@ -1121,8 +1145,14 @@ describe('PATCH /admin/ngos/:id', () => {
       data: { ownerAddress: fakeAddress('D'), name: 'Test NGO', verified: true },
     });
 
-    const url = `/admin/ngos/${ngo.id}`;
-    const headers = signAdminRequest(adminKeypair, 'PATCH', url);
+    const url = `/v1/admin/ngos/${ngo.id}`;
+    const headers = signAdminRequest(
+      adminKeypair,
+      'PATCH',
+      url,
+      undefined,
+      JSON.stringify({ displayName: 123 }),
+    );
 
     const response = await app.inject({
       method: 'PATCH',

@@ -102,7 +102,7 @@ describe('GET /v1/donors', () => {
           ngoId: ngo.id,
           tokenAddress: fakeAddress('T'),
           rate: '1',
-          balance: '100',
+          balance: '50',
           withdrawn: '900',
         },
       ],

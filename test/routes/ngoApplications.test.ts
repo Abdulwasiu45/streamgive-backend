@@ -9,6 +9,7 @@ import { buildServer } from '../../src/server.js';
 import { notify } from '../../src/notifications/service.js';
 import { fakeAddress, resetDb } from '../helpers/db.js';
 import { signAdminRequest } from '../helpers/adminAuth.js';
+import { sep53Hash } from '../../src/middleware/adminAuth.js';
 
 const adminKeypair = Keypair.random();
 const applicationOwnerKeypair = Keypair.random();
