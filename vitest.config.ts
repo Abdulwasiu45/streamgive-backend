@@ -3,6 +3,7 @@ import { configDefaults, defineConfig } from 'vitest/config';
 const unitTests = [
   'test/cacheable.test.ts',
   'test/compression.test.ts',
+  'test/config.test.ts',
   'test/cors.test.ts',
   'test/metrics.test.ts',
   'test/requestId.test.ts',

@@ -11,6 +11,10 @@ the `x-streamgive-signature` header, keyed with the destination's secret, as
 described in the "Notification events" section of the
 [README](../README.md#notification-events).
 
+For receiver-side guidance — signature verification, answering within the
+timeout, retries, ordering and idempotency — see
+[WEBHOOKS.md](./WEBHOOKS.md).
+
 ## `ngo_registered`
 
 Emitted when an NGO signs up through the `register` entry point of the

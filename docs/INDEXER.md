@@ -5,6 +5,9 @@ StreamGive smart contracts and writes the results into the PostgreSQL database.
 It runs as a background loop inside the same Node.js process as the API server
 (see [`src/indexer/worker.ts`](../src/indexer/worker.ts)).
 
+Operational procedures for lag, skip-ahead recovery, dead letters and full
+reindexing are in [RUNBOOK.md](./RUNBOOK.md).
+
 ## Watched contracts
 
 | Env var                      | Purpose                                                          |
@@ -165,6 +168,7 @@ RPC and reconcile the affected database projections. This is not automated;
 use a purpose-built reindex/backfill process rather than simply moving the
 checkpoint backward, which could apply relative stream balance changes twice.
 The planned tooling is tracked in the [backfill issue #11](https://github.com/StreamGive/streamgive-backend/issues/11).
+Step-by-step recovery steps are in [RUNBOOK.md](./RUNBOOK.md#skip-ahead-recovery).
 
 ## Verification reconciliation
 

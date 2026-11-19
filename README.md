@@ -204,6 +204,10 @@ where `<hex>` is the lower-case hex HMAC-SHA256 of the **raw request body**,
 keyed with `NOTIFY_WEBHOOK_SECRET`. There is no prefix, timestamp or version
 tag in the value — it is the bare digest.
 
+For a receiver-side guide — verification examples, answering within the
+timeout, retries, ordering and idempotency — see
+[docs/WEBHOOKS.md](./docs/WEBHOOKS.md).
+
 ### `stream_created`
 
 Emitted when a donor opens a new donation stream to an NGO.

@@ -8,6 +8,7 @@ import swaggerUi from '@fastify/swagger-ui';
 import Fastify from 'fastify';
 import type { FastifyError, FastifyReply } from 'fastify';
 
+import { parseRateLimitMax, parseRateLimitWindow } from './config.js';
 import { prisma } from './db.js';
 import { recordHttpRequest, renderMetrics } from './metrics.js';
 import { getCheckpoint } from './indexer/checkpoint.js';
@@ -115,6 +116,11 @@ function configuredBodyLimit(): number {
 export function buildServer(options?: BuildServerOptions) {
   const requestStartedAt = new WeakMap<object, bigint>();
   const bodyLimit = configuredBodyLimit();
+  // Parsed once per server build: an invalid value fails startup here with a
+  // message that names the variable, instead of surfacing as NaN or a plugin
+  // error on the first throttled request.
+  const rateLimitMax = parseRateLimitMax(process.env.RATE_LIMIT_MAX);
+  const rateLimitWindow = parseRateLimitWindow(process.env.RATE_LIMIT_WINDOW);
   const trustProxySetting =
     options?.trustProxy !== undefined
       ? options.trustProxy
@@ -258,8 +264,8 @@ export function buildServer(options?: BuildServerOptions) {
 
   app.register(rateLimit, {
     global: true,
-    max: Number(process.env.RATE_LIMIT_MAX ?? 100),
-    timeWindow: process.env.RATE_LIMIT_WINDOW ?? '1 minute',
+    max: rateLimitMax,
+    timeWindow: rateLimitWindow,
     // Spell the headers out instead of leaning on the plugin's defaults:
     // `Retry-After` is the machine-readable contract clients back off on
     // (RFC 9110 §10.2.3), and the `x-ratelimit-*` headers let a client see
@@ -271,6 +277,8 @@ export function buildServer(options?: BuildServerOptions) {
       'retry-after': true,
     },
   });
+
+  app.log.info({ max: rateLimitMax, timeWindow: rateLimitWindow }, 'global rate limit configured');
 
   // Root routes are declared before the limiter plugin's global onRoute hook runs.
   const rootRateLimitedRoutes = new Set(['/metrics', '/health', '/health/ready']);
