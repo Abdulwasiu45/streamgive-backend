@@ -3,12 +3,33 @@
 // before anything else is imported.
 import 'dotenv/config';
 
+import { parsePort } from './config.js';
 import { dispatchEvent } from './indexer/dispatch.js';
 import { startIndexer } from './indexer/worker.js';
 import { buildServer } from './server.js';
 
-const port = Number(process.env.PORT ?? 3000);
-const app = buildServer();
+function fail(message: string): never {
+  // A single line with the variable and the bad value is easier to act on
+  // than a stack trace from inside the listen call.
+  console.error(`❌ Configuration Error: ${message}`);
+  process.exit(1);
+}
+
+const port = (() => {
+  try {
+    return parsePort(process.env.PORT);
+  } catch (err) {
+    fail(err instanceof Error ? err.message : String(err));
+  }
+})();
+
+const app = (() => {
+  try {
+    return buildServer();
+  } catch (err) {
+    fail(err instanceof Error ? err.message : String(err));
+  }
+})();
 
 // Left unwrapped so a handler failure propagates: worker.ts's own catch
 // logs it and, crucially, leaves the checkpoint unadvanced so the failed

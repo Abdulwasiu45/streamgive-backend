@@ -375,3 +375,30 @@ describe('rate limit 429 responses', () => {
     await app.close();
   });
 });
+
+describe('rate limit environment validation at startup', () => {
+  const originalMax = process.env.RATE_LIMIT_MAX;
+  const originalWindow = process.env.RATE_LIMIT_WINDOW;
+
+  afterEach(() => {
+    if (originalMax === undefined) delete process.env.RATE_LIMIT_MAX;
+    else process.env.RATE_LIMIT_MAX = originalMax;
+    if (originalWindow === undefined) delete process.env.RATE_LIMIT_WINDOW;
+    else process.env.RATE_LIMIT_WINDOW = originalWindow;
+  });
+
+  it('refuses to start with a non-numeric max', () => {
+    process.env.RATE_LIMIT_MAX = 'abc';
+    expect(() => buildServer()).toThrow(/RATE_LIMIT_MAX/);
+  });
+
+  it('refuses to start with a zero max', () => {
+    process.env.RATE_LIMIT_MAX = '0';
+    expect(() => buildServer()).toThrow(/RATE_LIMIT_MAX/);
+  });
+
+  it('refuses to start with an unparseable window', () => {
+    process.env.RATE_LIMIT_WINDOW = 'fortnight';
+    expect(() => buildServer()).toThrow(/RATE_LIMIT_WINDOW/);
+  });
+});
