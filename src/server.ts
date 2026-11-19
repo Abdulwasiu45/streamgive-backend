@@ -20,6 +20,7 @@ import { ngoApplicationRoutes } from './routes/ngoApplications.js';
 import { ngoRoutes } from './routes/ngos.js';
 import { deadLetterRoutes } from './routes/deadLetters.js';
 import { streamRoutes } from './routes/streams.js';
+import { tokenRoutes } from './routes/tokens.js';
 import { registerRequestIdHeader, requestIdOptions } from './requestId.js';
 import { registerCompression } from './plugins/compression.js';
 import { registerLogRetention } from './maintenance/logRetention.js';
@@ -500,6 +501,7 @@ export function buildServer(options?: BuildServerOptions) {
   app.register(ngoRoutes, apiPrefix);
   app.register(donorRoutes, apiPrefix);
   app.register(streamRoutes, apiPrefix);
+  app.register(tokenRoutes, apiPrefix);
   app.register(impactRoutes, apiPrefix);
   app.register(ngoApplicationRoutes, apiPrefix);
   app.register(indexerStatusRoutes, apiPrefix);
