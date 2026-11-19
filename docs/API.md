@@ -562,6 +562,23 @@ when unchanged.
 Returns `400 {"error":"invalid_request"}` for invalid parameters and
 `404 {"error":"not_found"}` if the stream does not exist.
 
+### `GET /v1/tokens`
+
+**Auth:** Public
+
+Returns every distinct `tokenAddress` that appears on a stream, with the number
+of streams using it, ordered by token address. Useful for populating a token
+filter from real data. Responses include the same 30-second caching headers as
+the other public collection endpoints.
+
+```json
+{
+  "tokens": [
+    { "tokenAddress": "<STELLAR_CONTRACT_ADDRESS>", "streamCount": 12 }
+  ]
+}
+```
+
 ## Impact
 
 ### `GET /v1/impact`
@@ -698,10 +715,13 @@ Returns counts grouped by application status.
 
 **Auth:** Admin signature  
 **Query params:** `status` (`PENDING`, `APPROVED`, or `REJECTED`, optional),
-`limit` (integer, 1–100, default `100`), and `offset` (integer, 0–10000,
-default `0`). An `offset` above 10000 returns `400 invalid_request`.
+`search` (optional string, up to 200 characters, matched case-insensitively
+against `name` and `contactEmail`), `submittedAfter` and `submittedBefore`
+(optional ISO 8601 timestamps, inclusive bounds on `createdAt`), `limit`
+(integer, 1–100, default `100`), and `offset` (integer, 0–10000, default `0`).
+An `offset` above 10000 or an unparseable date returns `400 invalid_request`.
 
-Returns application records and the total count matching the optional status.
+Returns application records and the total count matching the combined filters.
 Records are ordered newest first, with `id` (descending) as a tie-breaker so
 pages are stable when several applications share a creation time.
 

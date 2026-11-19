@@ -16,6 +16,7 @@ let indexerLatestLedger = 0;
 let indexerEventsProcessed = 0;
 let indexerEventsDeadLettered = 0;
 let indexerEventsSkipped = 0;
+let indexerEventsUnknownContract = 0;
 
 function labels(method: string, route: string, statusCode: number): string {
   return `method="${method}",route="${route.replaceAll('"', '\\"')}",status_code="${statusCode}"`;
@@ -58,6 +59,11 @@ export function recordIndexerEventDeadLettered(): void {
 /** Counts confirmed skip-ahead operations; the RPC does not reveal how many events were missed. */
 export function recordIndexerEventsSkipped(): void {
   indexerEventsSkipped += 1;
+}
+
+/** Counts events whose contract id is not one of the watched contracts. */
+export function recordIndexerEventUnknownContract(): void {
+  indexerEventsUnknownContract += 1;
 }
 
 export function recordNotificationDelivery(outcome: 'success' | 'failure'): void {
@@ -141,6 +147,9 @@ export function renderMetrics(): string {
     '# HELP streamgive_indexer_events_skipped_total Confirmed out-of-range skip-ahead operations.',
     '# TYPE streamgive_indexer_events_skipped_total counter',
     `streamgive_indexer_events_skipped_total ${indexerEventsSkipped}`,
+    '# HELP streamgive_indexer_events_unknown_contract_total Events ignored because their contract is not watched.',
+    '# TYPE streamgive_indexer_events_unknown_contract_total counter',
+    `streamgive_indexer_events_unknown_contract_total ${indexerEventsUnknownContract}`,
     '# HELP streamgive_notification_deliveries_total Webhook notification delivery attempts.',
     '# TYPE streamgive_notification_deliveries_total counter',
   );

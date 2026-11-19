@@ -882,6 +882,133 @@ describe('GET /ngo-applications status filter', () => {
   });
 });
 
+describe('GET /ngo-applications search and date filters', () => {
+  beforeAll(() => {
+    process.env.ADMIN_ADDRESS = adminKeypair.publicKey();
+  });
+
+  afterEach(async () => {
+    vi.mocked(notify).mockClear();
+    await resetDb();
+  });
+
+  async function seedFilterableApplications() {
+    const [alpha, beta, gamma] = await Promise.all([
+      prisma.ngoApplication.create({
+        data: validApplicationPayload({
+          ownerAddress: fakeAddress('A'),
+          name: 'Alpha Aid',
+          contactEmail: 'alpha@example.org',
+          status: 'PENDING',
+          createdAt: new Date('2024-01-01T00:00:00.000Z'),
+        }),
+      }),
+      prisma.ngoApplication.create({
+        data: validApplicationPayload({
+          ownerAddress: fakeAddress('B'),
+          name: 'Beta Relief',
+          contactEmail: 'beta@example.org',
+          status: 'APPROVED',
+          createdAt: new Date('2024-02-01T00:00:00.000Z'),
+        }),
+      }),
+      prisma.ngoApplication.create({
+        data: validApplicationPayload({
+          ownerAddress: fakeAddress('C'),
+          name: 'Gamma Trust',
+          contactEmail: 'gamma@example.org',
+          status: 'PENDING',
+          createdAt: new Date('2024-03-01T00:00:00.000Z'),
+        }),
+      }),
+    ]);
+
+    return { alpha, beta, gamma };
+  }
+
+  async function list(query: string) {
+    const app = buildServer();
+    const url = `/v1/ngo-applications?${query}`;
+    const headers = signAdminRequest(adminKeypair, 'GET', url);
+    const response = await app.inject({ method: 'GET', url, headers });
+    await app.close();
+    return response;
+  }
+
+  it('searches names and contact emails case-insensitively', async () => {
+    const { alpha, beta } = await seedFilterableApplications();
+
+    const byName = await list('search=alpha');
+    expect(byName.statusCode).toBe(200);
+    expect(byName.json().applications.map((application: { id: string }) => application.id)).toEqual(
+      [alpha.id],
+    );
+    expect(byName.json().total).toBe(1);
+
+    const byEmail = await list('search=BETA%40EXAMPLE');
+    expect(byEmail.statusCode).toBe(200);
+    expect(byEmail.json().applications.map((application: { id: string }) => application.id)).toEqual(
+      [beta.id],
+    );
+
+    const noMatch = await list('search=gamma&status=APPROVED');
+    expect(noMatch.statusCode).toBe(200);
+    expect(noMatch.json().applications).toEqual([]);
+    expect(noMatch.json().total).toBe(0);
+  });
+
+  it('combines the search with the status filter', async () => {
+    const { alpha, beta, gamma } = await seedFilterableApplications();
+
+    const pending = await list('search=%40example&status=PENDING');
+    expect(pending.statusCode).toBe(200);
+    expect(
+      pending.json().applications.map((application: { id: string }) => application.id).sort(),
+    ).toEqual([alpha.id, gamma.id].sort());
+
+    const approved = await list('search=%40example&status=APPROVED');
+    expect(approved.statusCode).toBe(200);
+    expect(
+      approved.json().applications.map((application: { id: string }) => application.id),
+    ).toEqual([beta.id]);
+  });
+
+  it('filters by inclusive submission date bounds combined with status', async () => {
+    const { alpha, beta, gamma } = await seedFilterableApplications();
+
+    const after = await list(
+      `submittedAfter=${encodeURIComponent('2024-02-01T00:00:00.000Z')}&status=APPROVED`,
+    );
+    expect(after.statusCode).toBe(200);
+    expect(after.json().applications.map((application: { id: string }) => application.id)).toEqual([
+      beta.id,
+    ]);
+
+    const before = await list(
+      `submittedBefore=${encodeURIComponent('2024-01-31T23:59:59.999Z')}&status=PENDING`,
+    );
+    expect(before.statusCode).toBe(200);
+    expect(
+      before.json().applications.map((application: { id: string }) => application.id),
+    ).toEqual([alpha.id]);
+
+    const between = await list(
+      `submittedAfter=${encodeURIComponent('2024-01-15T00:00:00.000Z')}&submittedBefore=${encodeURIComponent('2024-03-15T00:00:00.000Z')}&status=PENDING`,
+    );
+    expect(between.statusCode).toBe(200);
+    expect(
+      between.json().applications.map((application: { id: string }) => application.id),
+    ).toEqual([gamma.id]);
+  });
+
+  it('rejects an invalid submission date with 400 invalid_request', async () => {
+    const response = await list('submittedAfter=not-a-date');
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json().error).toBe('invalid_request');
+  });
+});
+
 describe('GET /v1/ngo-applications offset bound and stable paging', () => {
   beforeAll(() => {
     process.env.ADMIN_ADDRESS = adminKeypair.publicKey();

@@ -79,11 +79,16 @@ export const MAX_APPLICATION_LIST_OFFSET = 10_000;
 
 /**
  * Query for the admin list: optional status (`PENDING`, `APPROVED`, or
- * `REJECTED`), `limit` from 1–100 (default 100), and `offset` from
+ * `REJECTED`), case-insensitive `search` over name and contact email,
+ * inclusive `submittedAfter` / `submittedBefore` bounds on `createdAt`,
+ * `limit` from 1–100 (default 100), and `offset` from
  * 0–`MAX_APPLICATION_LIST_OFFSET` (default 0).
  */
 const listQuerySchema = z.object({
   status: z.enum(['PENDING', 'APPROVED', 'REJECTED']).optional(),
+  search: z.string().trim().min(1).max(200).optional(),
+  submittedAfter: z.coerce.date().optional(),
+  submittedBefore: z.coerce.date().optional(),
   limit: z.coerce.number().int().min(1).max(100).default(100),
   offset: z.coerce.number().int().min(0).max(MAX_APPLICATION_LIST_OFFSET).default(0),
 });
@@ -392,9 +397,9 @@ export async function ngoApplicationRoutes(app: FastifyInstance): Promise<void> 
    * created at the same instant keep a fixed position and offset pages never
    * repeat or skip a row.
    * @route GET /v1/ngo-applications
-   * @query status, limit, offset
+   * @query status, search, submittedAfter, submittedBefore, limit, offset
    * @auth Admin signature required via `x-admin-address`, `x-admin-timestamp`, and `x-admin-signature`.
-   * @returns 200 `{ applications: Application[], total, limit, offset }`; 400 `{ error: "invalid_request", details }` (including `offset` above `MAX_APPLICATION_LIST_OFFSET`).
+   * @returns 200 `{ applications: Application[], total, limit, offset }`; 400 `{ error: "invalid_request", details }` (including invalid dates and an `offset` above `MAX_APPLICATION_LIST_OFFSET`).
    */
   app.get('/ngo-applications', { preHandler: requireAdminSignature }, async (request, reply) => {
     const parsed = listQuerySchema.safeParse(request.query);
@@ -402,7 +407,26 @@ export async function ngoApplicationRoutes(app: FastifyInstance): Promise<void> 
       return reply.code(400).send({ error: 'invalid_request', details: parsed.error.flatten() });
     }
 
-    const where = parsed.data.status ? { status: parsed.data.status } : {};
+    const { status, search, submittedAfter, submittedBefore } = parsed.data;
+    const where = {
+      ...(status ? { status } : {}),
+      ...(search
+        ? {
+            OR: [
+              { name: { contains: search, mode: 'insensitive' as const } },
+              { contactEmail: { contains: search, mode: 'insensitive' as const } },
+            ],
+          }
+        : {}),
+      ...(submittedAfter || submittedBefore
+        ? {
+            createdAt: {
+              ...(submittedAfter ? { gte: submittedAfter } : {}),
+              ...(submittedBefore ? { lte: submittedBefore } : {}),
+            },
+          }
+        : {}),
+    };
 
     const [applications, total] = await Promise.all([
       prisma.ngoApplication.findMany({
