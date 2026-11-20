@@ -159,6 +159,38 @@ model NotificationEndpoint {
   @@map("notification_endpoints")
 }
 
+enum WebhookDeliveryStatus {
+  PENDING
+  SUCCEEDED
+  FAILED
+}
+
+/// Durable per-destination webhook attempts. The URL and secret are snapshotted
+/// when queued so retries remain possible if an endpoint is later edited or deleted.
+model WebhookDelivery {
+  id            String                @id @default(uuid())
+  deliveryKey   String                @unique @map("delivery_key")
+  eventId       String?               @map("event_id")
+  eventType     String                @map("event_type")
+  channel       String
+  url           String
+  secret        String?
+  payload       String
+  status        WebhookDeliveryStatus @default(PENDING)
+  attempts      Int                   @default(0)
+  maxAttempts   Int                   @default(5) @map("max_attempts")
+  nextAttemptAt DateTime              @default(now()) @map("next_attempt_at")
+  lockedUntil   DateTime?             @map("locked_until")
+  lastError     String?               @map("last_error")
+  completedAt   DateTime?             @map("completed_at")
+  createdAt     DateTime              @default(now()) @map("created_at")
+  updatedAt     DateTime              @updatedAt @map("updated_at")
+
+  @@index([status, nextAttemptAt])
+  @@index([lockedUntil])
+  @@map("webhook_deliveries")
+}
+
 /// Single-row-per-id table tracking how far the event indexer has gotten,
 /// so a restart resumes instead of re-scanning from "now" every time.
 model IndexerCheckpoint {

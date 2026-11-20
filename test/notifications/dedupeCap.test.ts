@@ -6,10 +6,64 @@ const findFirst = vi.fn();
 const create = vi.fn();
 const upsert = vi.fn();
 const findMany = vi.fn();
+const deliveryRows = new Map<string, Record<string, unknown>>();
+const deliveryByEvent = new Map<string, string>();
+let nextDeliveryId = 0;
+const deliveryUpsert = vi.fn(
+  ({
+    where,
+    create,
+  }: {
+    where: { deliveryKey: string };
+    create: Record<string, unknown>;
+  }) => {
+    const key = where.deliveryKey;
+    const existingId = deliveryByEvent.get(key);
+    if (existingId) return deliveryRows.get(existingId);
+    const id = `delivery-${++nextDeliveryId}`;
+    const row = {
+      ...create,
+      id,
+      attempts: 0,
+      status: 'PENDING',
+      nextAttemptAt: new Date(0),
+      lockedUntil: null,
+      maxAttempts: 5,
+    };
+    deliveryByEvent.set(key, id);
+    deliveryRows.set(id, row);
+    return row;
+  },
+);
+const deliveryFindUnique = vi.fn(({ where }: { where: { id: string } }) =>
+  deliveryRows.get(where.id) ?? null,
+);
+const deliveryUpdateMany = vi.fn(({ where }: { where: { id: string } }) => {
+    const row = deliveryRows.get(where.id);
+    if (!row) return { count: 0 };
+    row.attempts = Number(row.attempts) + 1;
+    row.lockedUntil = new Date(Date.now() + 60_000);
+    return { count: 1 };
+});
+const deliveryUpdate = vi.fn(
+  ({ where, data }: { where: { id: string }; data: Record<string, unknown> }) => {
+    const row = deliveryRows.get(where.id);
+    if (!row) throw new Error('delivery not found');
+    Object.assign(row, data);
+    return row;
+  },
+);
 vi.mock('../../src/db.js', () => ({
   prisma: {
     notificationLog: { findFirst, create, upsert },
     notificationEndpoint: { findMany },
+    webhookDelivery: {
+      upsert: deliveryUpsert,
+      findUnique: deliveryFindUnique,
+      findUniqueOrThrow: deliveryFindUnique,
+      updateMany: deliveryUpdateMany,
+      update: deliveryUpdate,
+    },
   },
 }));
 
@@ -39,6 +93,13 @@ describe('notify de-duplication cap', () => {
     create.mockReset().mockResolvedValue({});
     upsert.mockReset().mockResolvedValue({});
     findMany.mockReset().mockResolvedValue([]); // no table endpoints: env fallback
+    deliveryRows.clear();
+    deliveryByEvent.clear();
+    nextDeliveryId = 0;
+    deliveryUpsert.mockClear();
+    deliveryFindUnique.mockClear();
+    deliveryUpdateMany.mockClear();
+    deliveryUpdate.mockClear();
     process.env.NOTIFY_WEBHOOK_URL = 'http://example.com/webhook';
     vi.spyOn(console, 'log').mockImplementation(() => {});
     vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -63,15 +124,15 @@ describe('notify de-duplication cap', () => {
     expect(deliveredCount()).toBe(CAP);
   });
 
-  it('evicts the oldest ids first and keeps the newest', async () => {
+  it('uses the durable outbox to avoid resending ids after in-memory eviction', async () => {
     await fill(CAP + 1); // evt-0 is evicted
     fetchSpy.mockClear();
 
     await notify(eventWithId(CAP)); // newest: still remembered, not resent
     expect(fetchSpy).not.toHaveBeenCalled();
 
-    await notify(eventWithId(0)); // oldest: forgotten, delivered again
-    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    await notify(eventWithId(0)); // forgotten in memory, but still persisted as delivered
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 
   it('still delivers the event that triggers an eviction', async () => {

@@ -6,6 +6,7 @@ import 'dotenv/config';
 import { parsePort } from './config.js';
 import { dispatchEvent } from './indexer/dispatch.js';
 import { startIndexer } from './indexer/worker.js';
+import { startWebhookDeliveryWorker } from './notifications/webhookDeliveryWorker.js';
 import { buildServer } from './server.js';
 
 function fail(message: string): never {
@@ -35,6 +36,7 @@ const app = (() => {
 // logs it and, crucially, leaves the checkpoint unadvanced so the failed
 // event gets retried on the next poll instead of silently skipped.
 const stopIndexer = startIndexer(dispatchEvent);
+const stopWebhookDeliveryWorker = startWebhookDeliveryWorker();
 
 /**
  * Tear down the indexer and HTTP server, then resolve. The caller is
@@ -45,6 +47,7 @@ const stopIndexer = startIndexer(dispatchEvent);
 export async function shutdown(signal: string): Promise<void> {
   app.log.info({ signal }, 'shutting down');
   await stopIndexer();
+  await stopWebhookDeliveryWorker();
   await app.close();
 }
 

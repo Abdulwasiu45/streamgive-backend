@@ -77,6 +77,7 @@ lifetime. Everything else is uncached.
 | `GET /v1/donors/{address}` | Yes |
 | `GET /v1/streams` | Yes |
 | `GET /v1/streams/{id}` | Yes |
+| `GET /v1/streams/on-chain/{onChainId}` | Yes |
 | `GET /v1/streams/{id}/activity` | Yes |
 | `GET /v1/impact` | Yes |
 | `GET /v1/impact/{ngoId}` | Yes |
@@ -139,7 +140,7 @@ These endpoints are mounted at the server root, not under `/v1`.
 
 ### `GET /health`
 
-**Auth:** Public  
+**Auth:** Public
 **Params:** None.
 
 Checks database and Stellar RPC connectivity. Returns `200` when both checks
@@ -515,7 +516,7 @@ Invalid filters return `400 {"error":"invalid_request"}`.
 
 ### `GET /v1/streams/{id}`
 
-**Auth:** Public  
+**Auth:** Public
 **Path params:** `id` (required): stream UUID.
 
 Returns one stream in the same shape as an item from
@@ -523,6 +524,16 @@ Returns one stream in the same shape as an item from
 ID and `404 {"error":"not_found"}` if no stream exists. Example response: the
 single stream object shown in the `GET /v1/streams` example (without the
 `streams`, `hasMore`, and `nextCursor` wrapper).
+
+### `GET /v1/streams/on-chain/{onChainId}`
+
+**Auth:** Public
+**Path params:** `onChainId` (required): unsigned decimal stream ID assigned
+by the donation-vault contract.
+
+Returns the matching stream in the same shape as
+`GET /v1/streams/{id}`. Malformed, out-of-range, and unknown IDs return
+`404 {"error":"not_found"}`.
 
 ### `GET /v1/streams/{id}/activity`
 

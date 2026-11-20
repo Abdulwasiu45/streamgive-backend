@@ -48,6 +48,12 @@ delete querystringDocs.$schema;
 
 /** Params for stream detail and activity routes; `id` must be a stream UUID. */
 const idParamSchema = z.object({ id: z.string().uuid() });
+const onChainIdParamSchema = z.object({
+  onChainId: z
+    .string()
+    .regex(/^(0|[1-9]\d{0,19})$/)
+    .refine((value) => BigInt(value) <= 18_446_744_073_709_551_615n),
+});
 
 /**
  * Query for GET /v1/streams/:id/activity: `limit` from 1–100 (default 100)
@@ -186,6 +192,52 @@ export async function streamRoutes(app: FastifyInstance): Promise<void> {
 
       const stream = await prisma.stream.findUnique({
         where: { id: parsedParams.data.id },
+        include: streamInclude,
+      });
+
+      if (!stream) {
+        return reply.code(404).send({ error: 'not_found' });
+      }
+
+      return sendPublicCacheable(request, reply, serializeStream(stream));
+    },
+  );
+
+  /**
+   * Returns a stream by its numeric id assigned by the donation-vault contract.
+   * @route GET /v1/streams/on-chain/:onChainId
+   * @param onChainId Unsigned decimal on-chain stream id
+   * @auth Public
+   * @returns 200 serialized stream; 404 `{ error: "not_found" }` for unknown or malformed ids.
+   */
+  app.get(
+    '/streams/on-chain/:onChainId',
+    {
+      validatorCompiler: () => (data) => ({ value: data }),
+      schema: {
+        tags: ['Streams'],
+        summary: 'Get a donation stream by on-chain id',
+        params: {
+          type: 'object',
+          properties: {
+            onChainId: { type: 'string', pattern: '^(0|[1-9]\\d{0,19})$' },
+          },
+          required: ['onChainId'],
+        },
+        response: {
+          200: { type: 'object', additionalProperties: true },
+          404: { type: 'object', additionalProperties: true },
+        },
+      },
+    },
+    async (request, reply) => {
+      const parsedParams = onChainIdParamSchema.safeParse(request.params);
+      if (!parsedParams.success) {
+        return reply.code(404).send({ error: 'not_found' });
+      }
+
+      const stream = await prisma.stream.findUnique({
+        where: { onChainId: BigInt(parsedParams.data.onChainId) },
         include: streamInclude,
       });
 

@@ -642,6 +642,53 @@ describe('GET /v1/streams/:id/activity', () => {
     await resetDb();
   });
 
+  describe('GET /v1/streams/on-chain/:onChainId', () => {
+    afterEach(async () => {
+      await resetDb();
+    });
+
+    it('returns a stream found by its on-chain id', async () => {
+      const app = buildServer();
+      const donor = await prisma.donor.create({ data: { address: fakeAddress('A') } });
+      const ngo = await prisma.ngo.create({
+        data: { ownerAddress: fakeAddress('B'), name: 'NGO', verified: true },
+      });
+      await prisma.stream.create({
+        data: {
+          onChainId: 9123456789012345678n,
+          donorId: donor.id,
+          ngoId: ngo.id,
+          tokenAddress: fakeContractAddress('C'),
+          rate: '1',
+          balance: '100',
+          withdrawn: '0',
+        },
+      });
+
+      const response = await app.inject({
+        method: 'GET',
+        url: '/v1/streams/on-chain/9123456789012345678',
+      });
+      expect(response.statusCode).toBe(200);
+      expect(response.json().onChainId).toBe('9123456789012345678');
+
+      await app.close();
+    });
+
+    it.each(['unknown', '-1', '1.5', '18446744073709551616'])(
+      'returns 404 for malformed or unknown id %s',
+      async (onChainId) => {
+        const app = buildServer();
+        const response = await app.inject({
+          method: 'GET',
+          url: `/v1/streams/on-chain/${onChainId}`,
+        });
+        expect(response.statusCode).toBe(404);
+        await app.close();
+      },
+    );
+  });
+
   it("returns a stream's events newest first", async () => {
     const app = buildServer();
 
