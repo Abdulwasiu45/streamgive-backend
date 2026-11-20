@@ -177,25 +177,29 @@ model IndexerCheckpoint {
 /// forever. Nothing reads these rows automatically — they exist so a failure
 /// is inspectable and replayable by hand instead of silently dropped.
 model IndexerDeadLetter {
-  id         String    @id @default(uuid())
+  id             String    @id @default(uuid())
   /// Event id as assigned by the RPC ("<ledger>-<index>"), unique per event.
-  eventId    String    @unique @map("event_id")
-  ledger     Int
-  contractId String?   @map("contract_id")
+  eventId        String    @unique @map("event_id")
+  ledger         Int
+  contractId     String?   @map("contract_id")
   /// The handler's failure message, for diagnosing the shape mismatch.
-  error      String
+  error          String
   /// Raw topic ScVals encoded as base64 XDR strings.
-  topic      String[]  @default([])
+  topic          String[]  @default([])
   /// Raw value ScVal encoded as base64 XDR string.
-  value      String?
+  value          String?
   /// Transaction hash that contained the event.
-  txHash     String?   @map("tx_hash")
+  txHash         String?   @map("tx_hash")
   /// Number of times processing this event has been attempted.
-  attempts   Int       @default(1)
+  attempts       Int       @default(1)
   /// Timestamp when the dead letter was resolved or replayed.
-  resolvedAt DateTime? @map("resolved_at")
-  createdAt  DateTime  @default(now()) @map("created_at")
-  updatedAt  DateTime  @updatedAt @map("updated_at")
+  resolvedAt     DateTime? @map("resolved_at")
+  /// Admin address that marked this event resolved.
+  resolvedBy String?   @map("resolved_by")
+  /// Optional operator note describing the resolution.
+  resolutionNote String? @map("resolution_note")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
 
   @@index([ledger])
   @@map("indexer_dead_letters")

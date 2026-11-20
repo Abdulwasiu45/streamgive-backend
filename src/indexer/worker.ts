@@ -8,6 +8,7 @@ import { getLatestLedgerSequence, rpcServer } from '../stellar/rpc.js';
 import { getCheckpointState, saveCheckpoint } from './checkpoint.js';
 import { WATCHED_CONTRACT_IDS } from './contracts.js';
 import { recordDeadLetter } from './deadLetter.js';
+import { tryAcquireIndexerLock, type IndexerLock } from './lock.js';
 
 const POLL_INTERVAL_MS = Number(process.env.INDEXER_POLL_INTERVAL_MS ?? 5000);
 const START_LEDGER = process.env.INDEXER_START_LEDGER
@@ -269,6 +270,7 @@ export function startIndexer(handleEvent: EventHandler): () => Promise<void> {
   let inFlight: Promise<void> | undefined;
   let consecutiveFailures = 0;
   let stopped = false;
+  let indexerLock: IndexerLock | undefined;
 
   function scheduleNextPoll(): void {
     if (stopped) {
@@ -287,6 +289,19 @@ export function startIndexer(handleEvent: EventHandler): () => Promise<void> {
 
     inFlight = (async () => {
       try {
+        if (!indexerLock?.isHeld()) {
+          indexerLock = undefined;
+          const acquiredLock = await tryAcquireIndexerLock();
+          if (!acquiredLock) {
+            return;
+          }
+          if (stopped) {
+            await acquiredLock.release();
+            return;
+          }
+          indexerLock = acquiredLock;
+        }
+
         await pollOnce(handleEvent);
         consecutiveFailures = 0;
         consecutivePollFailures = 0;
@@ -319,5 +334,10 @@ export function startIndexer(handleEvent: EventHandler): () => Promise<void> {
     stopped = true;
     clearTimeout(timer);
     await inFlight;
+    if (indexerLock) {
+      const lock = indexerLock;
+      indexerLock = undefined;
+      await lock.release();
+    }
   };
 }

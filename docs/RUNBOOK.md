@@ -113,6 +113,23 @@ undefined`, `Unknown stream`, an XDR/StrKey decode error). Compare `topic`
   no-op otherwise). Re-add the contract ID before replaying, or resolve the row
   manually knowing the effect will not be applied.
 
+### Resolve without replay
+
+If the underlying cause was fixed manually and the event should not be replayed,
+use the admin API to close the row and preserve an audit trail:
+
+```http
+POST /v1/admin/dead-letters/<uuid>/resolve
+Content-Type: application/json
+
+{"note":"Cause corrected manually; replay not required"}
+```
+
+The request requires the normal admin signature. The response records the
+admin address and resolution time. A `409` means the row has already been
+resolved. Prefer this endpoint to direct SQL; the SQL update below is for
+break-glass recovery only.
+
 ### Replay
 
 ```bash

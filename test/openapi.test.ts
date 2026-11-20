@@ -43,4 +43,15 @@ describe('OpenAPI documentation', () => {
 
     await app.close();
   });
+
+  it('documents the admin dead-letter detail and resolve routes', async () => {
+    const app = buildServer();
+    await app.ready();
+
+    const spec = app.swagger();
+    expect(spec.paths?.['/v1/admin/dead-letters/{id}']?.get).toBeDefined();
+    expect(spec.paths?.['/v1/admin/dead-letters/{id}/resolve']?.post).toBeDefined();
+
+    await app.close();
+  });
 });

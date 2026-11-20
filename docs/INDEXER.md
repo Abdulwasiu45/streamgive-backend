@@ -8,6 +8,12 @@ It runs as a background loop inside the same Node.js process as the API server
 Operational procedures for lag, skip-ahead recovery, dead letters and full
 reindexing are in [RUNBOOK.md](./RUNBOOK.md).
 
+Every API process may run the worker, but a PostgreSQL advisory lock on a
+dedicated connection allows only one process to poll and write at a time.
+Other workers stay idle and retry lock acquisition at the configured polling
+interval. The lock is released when the owning worker shuts down or its
+database connection closes.
+
 ## Watched contracts
 
 | Env var                      | Purpose                                                          |

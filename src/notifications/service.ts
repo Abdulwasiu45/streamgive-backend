@@ -1,4 +1,4 @@
-import { createHmac } from 'node:crypto';
+import { createHmac, randomUUID } from 'node:crypto';
 
 import { prisma } from '../db.js';
 import { recordNotificationDelivery } from '../metrics.js';
@@ -28,13 +28,12 @@ function rememberDelivered(eventId: string): void {
 }
 
 /**
- * Header carrying an HMAC-SHA256 of the request body, keyed with
- * `NOTIFY_WEBHOOK_SECRET`, so a receiver can tell a real notification from
- * one posted by anybody who happened to learn the webhook URL. Lower-case
- * hex, no prefix. See the "Notification events" section of the README for
- * the receiver-side verification recipe.
+ * Versioned HMAC-SHA256 over the timestamp, delivery id, and exact request
+ * body. See docs/NOTIFICATIONS.md for receiver-side verification.
  */
 const SIGNATURE_HEADER = 'x-streamgive-signature';
+const DELIVERY_ID_HEADER = 'x-streamgive-delivery-id';
+const TIMESTAMP_HEADER = 'x-streamgive-timestamp';
 const DEFAULT_WEBHOOK_TIMEOUT_MS = 3_000;
 
 type WebhookTarget = { url: string; secret?: string; channel: string };
@@ -80,13 +79,22 @@ async function notifyWebhookTarget(
   // wire, so those bytes are what has to be signed.
   const body = JSON.stringify(event);
 
-  const headers: Record<string, string> = { 'content-type': 'application/json' };
+  const timestamp = Math.floor(Date.now() / 1000).toString();
+  const deliveryId = randomUUID();
+  const headers: Record<string, string> = {
+    'content-type': 'application/json',
+    [DELIVERY_ID_HEADER]: deliveryId,
+    [TIMESTAMP_HEADER]: timestamp,
+  };
 
   // Read per call rather than at module load so deployments can rotate the
   // secret without a restart, and so tests can set it per case.
   const secret = target.secret;
   if (secret) {
-    headers[SIGNATURE_HEADER] = createHmac('sha256', secret).update(body).digest('hex');
+    const signature = createHmac('sha256', secret)
+      .update(`${timestamp}.${deliveryId}.${body}`)
+      .digest('hex');
+    headers[SIGNATURE_HEADER] = `v1=${signature}`;
   }
 
   let success = false;

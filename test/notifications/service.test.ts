@@ -333,7 +333,7 @@ describe('notify', () => {
       return fetchSpy;
     }
 
-    it('signs the body with an HMAC-SHA256 of NOTIFY_WEBHOOK_SECRET', async () => {
+    it('signs the timestamp, delivery id, and body with a versioned HMAC-SHA256', async () => {
       process.env.NOTIFY_WEBHOOK_URL = 'http://example.com/webhook';
       process.env.NOTIFY_WEBHOOK_SECRET = 'a-shared-secret';
 
@@ -345,14 +345,16 @@ describe('notify', () => {
       const [, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
       const headers = init.headers as Record<string, string>;
       const body = init.body as string;
+      const deliveryId = headers['x-streamgive-delivery-id'];
+      const timestamp = headers['x-streamgive-timestamp'];
 
-      // Recomputed here from the secret and the bytes actually sent, rather
-      // than compared against a hard-coded digest — that way the assertion
-      // stays true if the payload shape changes, and still fails if the
-      // service ever signs something other than what it transmits.
-      const expected = createHmac('sha256', 'a-shared-secret').update(body).digest('hex');
+      const expected = createHmac('sha256', 'a-shared-secret')
+        .update(`${timestamp}.${deliveryId}.${body}`)
+        .digest('hex');
 
-      expect(headers['x-streamgive-signature']).toBe(expected);
+      expect(deliveryId).toMatch(/^[0-9a-f-]{36}$/);
+      expect(Number(timestamp)).toBeGreaterThan(0);
+      expect(headers['x-streamgive-signature']).toBe(`v1=${expected}`);
     });
 
     it('signs the exact bytes sent as the body, not a re-serialisation', async () => {
@@ -366,14 +368,14 @@ describe('notify', () => {
       const [, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
       const headers = init.headers as Record<string, string>;
       const signature = headers['x-streamgive-signature'];
+      const deliveryId = headers['x-streamgive-delivery-id'];
+      const timestamp = headers['x-streamgive-timestamp'];
 
-      // A receiver only ever has the raw body — this is that verification,
-      // done the way the README tells integrators to do it.
       const verified = createHmac('sha256', 'a-shared-secret')
-        .update(Buffer.from(init.body as string, 'utf8'))
+        .update(`${timestamp}.${deliveryId}.${Buffer.from(init.body as string, 'utf8').toString()}`)
         .digest('hex');
 
-      expect(signature).toBe(verified);
+      expect(signature).toBe(`v1=${verified}`);
       expect(JSON.parse(init.body as string)).toEqual(event);
     });
 
@@ -389,9 +391,13 @@ describe('notify', () => {
       const headers = init.headers as Record<string, string>;
 
       const forged = JSON.stringify({ ...event, ngoId: 'ATTACKER-NGO' });
-      const forgedDigest = createHmac('sha256', 'a-shared-secret').update(forged).digest('hex');
+      const forgedDigest = createHmac('sha256', 'a-shared-secret')
+        .update(
+          `${headers['x-streamgive-timestamp']}.${headers['x-streamgive-delivery-id']}.${forged}`,
+        )
+        .digest('hex');
 
-      expect(forgedDigest).not.toBe(headers['x-streamgive-signature']);
+      expect(`v1=${forgedDigest}`).not.toBe(headers['x-streamgive-signature']);
     });
 
     it('omits the signature header when no secret is configured', async () => {
@@ -405,6 +411,8 @@ describe('notify', () => {
       const headers = init.headers as Record<string, string>;
 
       expect(headers['x-streamgive-signature']).toBeUndefined();
+      expect(headers['x-streamgive-delivery-id']).toMatch(/^[0-9a-f-]{36}$/);
+      expect(Number(headers['x-streamgive-timestamp'])).toBeGreaterThan(0);
       expect(headers['content-type']).toBe('application/json');
     });
   });

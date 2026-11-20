@@ -14,9 +14,12 @@ destination (subscriptions, delivery logs, secrets), see the
 
 - A `POST` with `content-type: application/json` and a JSON object body whose
   `type` field discriminates the event.
-- An optional `x-streamgive-signature` header: lower-case hex HMAC-SHA256 of
-  the **raw request body**, keyed with the destination's secret. The header is
-  absent only when the destination has no secret configured.
+- An `x-streamgive-delivery-id` UUID and `x-streamgive-timestamp` Unix epoch
+  seconds value on every request.
+- When a destination secret is configured, an
+  `x-streamgive-signature` header in the form `v1=<lower-case-hex>`. The
+  digest signs the timestamp, delivery id, and **raw request body**. The
+  signature header is absent only when the destination has no secret.
 - Some events carry an `eventId` (the on-chain event id, e.g.
   `0000123450-0000000001`). API-originated events such as
   `application_submitted` do not have one.
@@ -51,11 +54,23 @@ app.use(
   }),
 );
 
-function isFromStreamGive(rawBody, signatureHeader, secret) {
-  if (!signatureHeader || rawBody === undefined) return false;
+function isFromStreamGive(rawBody, signatureHeader, timestamp, deliveryId, secret) {
+  if (!signatureHeader || rawBody === undefined || !timestamp || !deliveryId) return false;
+  const match = /^v1=([0-9a-f]{64})$/.exec(signatureHeader);
+  const seconds = Number(timestamp);
+  if (
+    !match ||
+    !Number.isSafeInteger(seconds) ||
+    Math.abs(Date.now() / 1000 - seconds) > 300
+  ) {
+    return false;
+  }
 
-  const expected = createHmac('sha256', secret).update(rawBody).digest();
-  const received = Buffer.from(signatureHeader, 'hex');
+  const expected = createHmac('sha256', secret)
+    .update(`${timestamp}.${deliveryId}.`)
+    .update(rawBody)
+    .digest();
+  const received = Buffer.from(match[1], 'hex');
 
   // timingSafeEqual throws on a length mismatch, so check that first.
   return received.length === expected.length && timingSafeEqual(received, expected);
@@ -66,6 +81,8 @@ app.post('/hooks/streamgive', (req, res) => {
     !isFromStreamGive(
       req.rawBody,
       req.get('x-streamgive-signature'),
+      req.get('x-streamgive-timestamp'),
+      req.get('x-streamgive-delivery-id'),
       process.env.STREAMGIVE_WEBHOOK_SECRET,
     )
   ) {
@@ -83,6 +100,7 @@ app.post('/hooks/streamgive', (req, res) => {
 ```python
 import hashlib
 import hmac
+import time
 
 from flask import Flask, request, abort
 
@@ -92,7 +110,16 @@ app = Flask(__name__)
 def streamgive_hook():
     raw = request.get_data()  # bytes, exactly as received
     header = request.headers.get("x-streamgive-signature", "")
-    expected = hmac.new(SECRET.encode(), raw, hashlib.sha256).hexdigest()
+    timestamp = request.headers.get("x-streamgive-timestamp", "")
+    delivery_id = request.headers.get("x-streamgive-delivery-id", "")
+    try:
+        seconds = int(timestamp)
+    except ValueError:
+        abort(401)
+    if abs(time.time() - seconds) > 300 or not delivery_id:
+        abort(401)
+    signed = f"{timestamp}.{delivery_id}.".encode() + raw
+    expected = "v1=" + hmac.new(SECRET.encode(), signed, hashlib.sha256).hexdigest()
 
     if not hmac.compare_digest(expected, header):
         abort(401)
@@ -105,10 +132,11 @@ def streamgive_hook():
 Reject unsigned requests once a secret is configured. When a destination has no
 secret, the header is omitted, so you cannot distinguish StreamGive from anyone
 who learns the URL — treat that as a migration state, not a resting state.
-Rotate the secret by updating the destination, deploying the same value to the
-receiver, and only then removing the old one. There is no timestamp or version
-in the header, so signature verification alone does not stop replays;
-idempotency below does.
+Reject timestamps more than five minutes from the receiver's clock. Cache each
+accepted `x-streamgive-delivery-id` for at least five minutes and reject a
+duplicate ID to prevent replays within the timestamp window. Rotate the secret
+by updating the destination, deploying the same value to the receiver, and only
+then removing the old one.
 
 ## Answer quickly
 

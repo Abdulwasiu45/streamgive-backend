@@ -24,14 +24,144 @@ function createDeadLetterFixture(
     txHash: 'deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef',
     attempts: 1,
     resolvedAt: null,
+    resolvedBy: null,
+    resolutionNote: null,
     createdAt: new Date(1700000000000 + index * 1000),
     ...overrides,
   };
 }
 
-describe('GET /v1/admin/dead-letters', () => {
+describe('Admin dead-letter routes', () => {
   beforeAll(() => {
     process.env.ADMIN_ADDRESS = adminKeypair.publicKey();
+  });
+
+  describe('GET /v1/admin/dead-letters/:id', () => {
+    it('returns a dead letter with its full event payload', async () => {
+      const app = buildServer();
+      const created = await prisma.indexerDeadLetter.create({
+        data: createDeadLetterFixture(20),
+      });
+      const url = `/v1/admin/dead-letters/${created.id}`;
+      const response = await app.inject({
+        method: 'GET',
+        url,
+        headers: signAdminRequest(adminKeypair, 'GET', url),
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(response.json()).toMatchObject({
+        id: created.id,
+        eventId: created.eventId,
+        error: created.error,
+        topic: created.topic,
+        value: created.value,
+      });
+      await app.close();
+    });
+
+    it('returns 400 for a non-UUID id and 404 for an unknown UUID', async () => {
+      const app = buildServer();
+      const invalidUrl = '/v1/admin/dead-letters/not-a-uuid';
+      const invalidResponse = await app.inject({
+        method: 'GET',
+        url: invalidUrl,
+        headers: signAdminRequest(adminKeypair, 'GET', invalidUrl),
+      });
+      expect(invalidResponse.statusCode).toBe(400);
+
+      const unknownUrl = '/v1/admin/dead-letters/00000000-0000-4000-8000-000000000000';
+      const unknownResponse = await app.inject({
+        method: 'GET',
+        url: unknownUrl,
+        headers: signAdminRequest(adminKeypair, 'GET', unknownUrl),
+      });
+      expect(unknownResponse.statusCode).toBe(404);
+      expect(unknownResponse.json()).toEqual({ error: 'dead_letter_not_found' });
+      await app.close();
+    });
+  });
+
+  describe('POST /v1/admin/dead-letters/:id/resolve', () => {
+    it('records the admin, resolution time, and optional note', async () => {
+      const app = buildServer();
+      const created = await prisma.indexerDeadLetter.create({
+        data: createDeadLetterFixture(21),
+      });
+      const url = `/v1/admin/dead-letters/${created.id}/resolve`;
+      const payload = JSON.stringify({ note: 'Cause corrected manually' });
+      const response = await app.inject({
+        method: 'POST',
+        url,
+        payload,
+        headers: {
+          ...signAdminRequest(adminKeypair, 'POST', url, Date.now().toString(), payload),
+          'content-type': 'application/json',
+        },
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(response.json().deadLetter).toMatchObject({
+        id: created.id,
+        resolvedBy: adminKeypair.publicKey(),
+        resolutionNote: 'Cause corrected manually',
+      });
+      expect(response.json().deadLetter.resolvedAt).toBeTruthy();
+
+      const alreadyResolvedPayload = JSON.stringify({ note: 'Second attempt' });
+      const alreadyResolved = await app.inject({
+        method: 'POST',
+        url,
+        payload: alreadyResolvedPayload,
+        headers: {
+          ...signAdminRequest(
+            adminKeypair,
+            'POST',
+            url,
+            (Date.now() + 1).toString(),
+            alreadyResolvedPayload,
+          ),
+          'content-type': 'application/json',
+        },
+      });
+      expect(alreadyResolved.statusCode).toBe(409);
+      expect(alreadyResolved.json()).toEqual({
+        error: 'dead_letter_already_resolved',
+        message: 'Dead letter has already been resolved',
+      });
+      await app.close();
+    });
+
+    it('resolves a dead letter without a note', async () => {
+      const app = buildServer();
+      const created = await prisma.indexerDeadLetter.create({
+        data: createDeadLetterFixture(22),
+      });
+      const url = `/v1/admin/dead-letters/${created.id}/resolve`;
+      const response = await app.inject({
+        method: 'POST',
+        url,
+        headers: signAdminRequest(adminKeypair, 'POST', url),
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(response.json().deadLetter.resolutionNote).toBeNull();
+      await app.close();
+    });
+
+    it('returns 404 for an unknown dead letter', async () => {
+      const app = buildServer();
+      const url = '/v1/admin/dead-letters/00000000-0000-4000-8000-000000000000/resolve';
+      const response = await app.inject({
+        method: 'POST',
+        url,
+        headers: signAdminRequest(adminKeypair, 'POST', url),
+      });
+
+      expect(response.statusCode).toBe(404);
+      expect(response.json()).toEqual({ error: 'dead_letter_not_found' });
+      await app.close();
+    });
   });
 
   afterEach(async () => {
