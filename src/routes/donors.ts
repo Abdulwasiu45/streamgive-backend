@@ -23,6 +23,25 @@ const addressParamSchema = z.object({
   address: z.string().regex(/^G[A-Z2-7]{55}$/),
 });
 
+/**
+ * Helper to escape a value for CSV with RFC 4180 rules and formula injection protection.
+ */
+export function escapeCsvField(value: unknown): string {
+  if (value === null || value === undefined) {
+    return '';
+  }
+  let str = String(value);
+  // Formula-safe: if string starts with dangerous characters, prefix with single quote
+  if (/^[=+\-@\t\r]/.test(str)) {
+    str = `'${str}`;
+  }
+  // If field contains quotes, commas, or newlines, wrap in quotes and escape internal quotes
+  if (str.includes('"') || str.includes(',') || str.includes('\n') || str.includes('\r')) {
+    return `"${str.replace(/"/g, '""')}"`;
+  }
+  return str;
+}
+
 export async function donorRoutes(app: FastifyInstance): Promise<void> {
   /**
    * Lists donors ranked by committed or withdrawn amount.
@@ -150,25 +169,6 @@ export async function donorRoutes(app: FastifyInstance): Promise<void> {
       distinctNgoCount: new Set(streams.map((stream) => stream.ngoId)).size,
     });
   });
-
-  /**
-   * Helper to escape a value for CSV with RFC 4180 rules and formula injection protection.
-   */
-  function escapeCsvField(value: unknown): string {
-    if (value === null || value === undefined) {
-      return '';
-    }
-    let str = String(value);
-    // Formula-safe: if string starts with dangerous characters, prefix with single quote
-    if (/^[=+\-@\t\r]/.test(str)) {
-      str = `'${str}`;
-    }
-    // If field contains quotes, commas, or newlines, wrap in quotes and escape internal quotes
-    if (str.includes('"') || str.includes(',') || str.includes('\n') || str.includes('\r')) {
-      return `"${str.replace(/"/g, '""')}"`;
-    }
-    return str;
-  }
 
   /**
    * Exports all streams for a donor as a CSV file with formula-safe fields.

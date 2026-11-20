@@ -10,6 +10,7 @@ const unitTests = [
   'test/security-headers.test.ts',
   'test/shutdown.test.ts',
   'test/routes/serializeStream.test.ts',
+  'test/routes/escapeCsvField.test.ts',
   'test/scripts/replayDeadLetters.test.ts',
 ];
 
