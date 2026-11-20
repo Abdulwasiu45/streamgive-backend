@@ -146,11 +146,13 @@ Emitted when an admin approves or rejects an NGO application.
 `application_submitted`). A notification is sent only to enabled endpoints
 whose event list contains its type. Destinations are called concurrently.
 
-Every delivery is recorded in `notification_logs`. Configured endpoints use a
-channel value of `webhook:<endpoint-id>`, so a success or failure can be
-inspected independently for each destination. On retry, a destination that
-already recorded success for an event is skipped while failed destinations
-are attempted again. Logs do not include endpoint secrets or URL paths.
+Every delivery is first persisted in `webhook_deliveries`, then recorded in
+`notification_logs`. Configured endpoints use a channel value of
+`webhook:<endpoint-id>`, so a success or failure can be inspected independently
+for each destination. Failed deliveries retry with exponential backoff and
+stop after five attempts. A delivery keeps its original URL and secret
+snapshot so retries survive endpoint edits and deletion. The API never returns
+stored endpoint secrets. Logs do not include endpoint secrets or URL paths.
 
 The existing `NOTIFY_WEBHOOK_URL` and `NOTIFY_WEBHOOK_SECRET` variables remain
 available for migration: they are used as a single all-events destination
@@ -159,6 +161,14 @@ enabled, table subscriptions take precedence.
 
 Endpoint configuration is operational data. Restrict database access to
 trusted operators and use HTTPS URLs for destinations.
+
+Signed administrators manage endpoints through `GET` and `POST
+/v1/admin/notification-endpoints`, plus `PATCH` and `DELETE
+/v1/admin/notification-endpoints/{id}`. Creation and updates accept `url`,
+`secret`, `eventTypes`, and (on update) `enabled`; the URL must use HTTPS and
+must not resolve to a private or local address. The response omits `secret`,
+including after creation, so keep the supplied secret in the operator's secret
+manager.
 
 ## Signature verification
 
@@ -170,7 +180,8 @@ epoch seconds; reject requests more than five minutes from the receiver's
 current time. Cache accepted delivery IDs for at least that same five-minute
 window and reject duplicates to prevent replay within the timestamp window.
 
-The sender creates a new UUID delivery ID and timestamp for each HTTP attempt.
+The sender uses the persisted delivery UUID and a new timestamp for each HTTP
+attempt, allowing receivers to deduplicate retries.
 When no secret is configured, the ID and timestamp are still sent but the
 signature header is omitted; receivers should require a signature after
 configuring a secret.

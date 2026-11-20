@@ -67,7 +67,7 @@ describe('notify', () => {
     await notify(event);
 
     expect(consoleErrorSpy).toHaveBeenCalledWith(
-      expect.stringMatching(/500.*http:\/\/example\.com\/webhook/),
+      expect.stringMatching(/500.*http:\/\/example\.com$/),
     );
   });
 
@@ -183,17 +183,17 @@ describe('notify', () => {
     await prisma.notificationEndpoint.createMany({
       data: [
         {
-          url: 'https://one.example/webhook',
+          url: 'https://8.8.8.8/one',
           secret: 'one-secret',
           eventTypes: ['stream_created'],
         },
         {
-          url: 'https://two.example/webhook',
+          url: 'https://8.8.4.4/two',
           secret: 'two-secret',
           eventTypes: ['ngo_approved'],
         },
         {
-          url: 'https://disabled.example/webhook',
+          url: 'https://1.1.1.1/disabled',
           secret: 'unused-secret',
           eventTypes: ['stream_created'],
           enabled: false,
@@ -206,7 +206,7 @@ describe('notify', () => {
 
     expect(fetchSpy).toHaveBeenCalledTimes(1);
     expect(fetchSpy).toHaveBeenCalledWith(
-      'https://one.example/webhook',
+      'https://8.8.8.8/one',
       expect.objectContaining({ method: 'POST', body: JSON.stringify({ ...event, eventId: 'fanout-event-1' }) }),
     );
     const log = await prisma.notificationLog.findFirst({
@@ -274,6 +274,10 @@ describe('notify', () => {
       expect(fetchSpy).toHaveBeenCalledTimes(1);
 
       // On retry, it should try sending again because the first attempt failed
+      await prisma.webhookDelivery.updateMany({
+        where: { eventId: retryEvent.eventId, channel: 'webhook' },
+        data: { nextAttemptAt: new Date(0) },
+      });
       await notify(retryEvent);
       expect(fetchSpy).toHaveBeenCalledTimes(2);
 
@@ -313,6 +317,76 @@ describe('notify', () => {
       // On re-delivery attempt after restart, it checks persisted database log and skips
       await notify(restartEvent);
       expect(fetchSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('persists failed attempts and gives up after the configured maximum', async () => {
+      process.env.NOTIFY_WEBHOOK_URL = 'http://example.com/webhook';
+      vi.spyOn(console, 'error').mockImplementation(() => {});
+      const fetchSpy = vi
+        .spyOn(globalThis, 'fetch')
+        .mockResolvedValue(new Response(null, { status: 503 }));
+      const eventWithId: NotificationEvent = {
+        type: 'stream_created',
+        streamId: '5',
+        donorAddress: 'GDONOR',
+        ngoId: 'NGO1',
+        eventId: 'event-max-attempts',
+      };
+      const eventId = 'event-max-attempts';
+
+      for (let attempt = 0; attempt < 5; attempt += 1) {
+        if (attempt > 0) {
+          await prisma.webhookDelivery.updateMany({
+            where: { eventId, channel: 'webhook' },
+            data: { nextAttemptAt: new Date(0) },
+          });
+        }
+        await notify(eventWithId);
+      }
+
+      const delivery = await prisma.webhookDelivery.findUnique({
+        where: {
+          deliveryKey: JSON.stringify([eventId, 'webhook']),
+        },
+      });
+      expect(fetchSpy).toHaveBeenCalledTimes(5);
+      expect(delivery?.attempts).toBe(5);
+      expect(delivery?.status).toBe('FAILED');
+      expect(delivery?.lastError).toContain('503');
+    });
+
+    it('retries persisted deliveries in the worker after a later due time', async () => {
+      process.env.NOTIFY_WEBHOOK_URL = 'http://example.com/webhook';
+      vi.spyOn(console, 'error').mockImplementation(() => {});
+      const fetchSpy = vi
+        .spyOn(globalThis, 'fetch')
+        .mockResolvedValueOnce(new Response(null, { status: 500 }))
+        .mockResolvedValueOnce(new Response(null, { status: 200 }));
+      const eventWithId: NotificationEvent = {
+        type: 'ngo_approved',
+        ownerAddress: 'GOWNER',
+        ngoId: 'NGO1',
+        eventId: 'event-worker-retry',
+      };
+      const eventId = 'event-worker-retry';
+
+      await notify(eventWithId);
+      await prisma.webhookDelivery.updateMany({
+        where: { eventId, channel: 'webhook' },
+        data: { nextAttemptAt: new Date(0) },
+      });
+      const { processDueWebhookDeliveries } =
+        await import('../../src/notifications/webhookDeliveryWorker.js');
+      await processDueWebhookDeliveries();
+
+      const delivery = await prisma.webhookDelivery.findUnique({
+        where: {
+          deliveryKey: JSON.stringify([eventId, 'webhook']),
+        },
+      });
+      expect(fetchSpy).toHaveBeenCalledTimes(2);
+      expect(delivery?.status).toBe('SUCCEEDED');
+      expect(delivery?.attempts).toBe(2);
     });
   });
 

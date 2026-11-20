@@ -7,9 +7,11 @@ import swagger from '@fastify/swagger';
 import swaggerUi from '@fastify/swagger-ui';
 import Fastify from 'fastify';
 import type { FastifyError, FastifyReply } from 'fastify';
+import packageJson from '../package.json' with { type: 'json' };
 
 import { parseRateLimitMax, parseRateLimitWindow } from './config.js';
 import { prisma } from './db.js';
+import { requireAdminSignature } from './middleware/adminAuth.js';
 import { recordHttpRequest, renderMetrics } from './metrics.js';
 import { getCheckpoint } from './indexer/checkpoint.js';
 import { donorRoutes } from './routes/donors.js';
@@ -19,6 +21,7 @@ import { getLatestLedgerSequence } from './stellar/rpc.js';
 import { ngoApplicationRoutes } from './routes/ngoApplications.js';
 import { ngoRoutes } from './routes/ngos.js';
 import { deadLetterRoutes } from './routes/deadLetters.js';
+import { notificationEndpointRoutes } from './routes/notificationEndpoints.js';
 import { streamRoutes } from './routes/streams.js';
 import { tokenRoutes } from './routes/tokens.js';
 import { registerRequestIdHeader, requestIdOptions } from './requestId.js';
@@ -345,7 +348,14 @@ export function buildServer(options?: BuildServerOptions) {
       info: {
         title: 'StreamGive API',
         description: 'API for the StreamGive platform',
-        version: '1.0.0',
+        version: packageJson.version,
+      },
+      components: {
+        securitySchemes: {
+          AdminAddress: { type: 'apiKey', in: 'header', name: 'x-admin-address' },
+          AdminSignature: { type: 'apiKey', in: 'header', name: 'x-admin-signature' },
+          AdminTimestamp: { type: 'apiKey', in: 'header', name: 'x-admin-timestamp' },
+        },
       },
       tags: [
         { name: 'Health', description: 'Service health checks' },
@@ -444,6 +454,24 @@ export function buildServer(options?: BuildServerOptions) {
   });
 
   app.addHook('onRoute', (route) => {
+    const preHandlers = Array.isArray(route.preHandler)
+      ? route.preHandler
+      : route.preHandler
+        ? [route.preHandler]
+        : [];
+    if (preHandlers.includes(requireAdminSignature)) {
+      route.schema = {
+        ...route.schema,
+        security: [
+          {
+            AdminAddress: [],
+            AdminSignature: [],
+            AdminTimestamp: [],
+          },
+        ],
+      };
+    }
+
     const schemas: Record<string, object> = {
       '/v1/ngos': {
         tags: ['NGOs'],
@@ -506,6 +534,7 @@ export function buildServer(options?: BuildServerOptions) {
   app.register(ngoApplicationRoutes, apiPrefix);
   app.register(indexerStatusRoutes, apiPrefix);
   app.register(deadLetterRoutes, apiPrefix);
+  app.register(notificationEndpointRoutes, apiPrefix);
   registerLogRetention(app);
 
   return app;

@@ -1,3 +1,14 @@
+export const NOTIFICATION_EVENT_TYPES = [
+  'stream_created',
+  'stream_withdrawn',
+  'stream_cancelled',
+  'ngo_registered',
+  'ngo_approved',
+  'ngo_revoked',
+  'application_submitted',
+  'application_reviewed',
+] as const;
+
 export type NotificationEvent =
   | {
       type: 'stream_created';
