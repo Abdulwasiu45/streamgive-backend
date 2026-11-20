@@ -129,6 +129,66 @@ describe('POST /v1/ngo-applications', () => {
     await app.close();
   });
 
+  it('replays the original response for a repeated Idempotency-Key', async () => {
+    const app = buildServer();
+    const payload = JSON.stringify(await signedApplicationPayload(app));
+    const send = () =>
+      app.inject({
+        method: 'POST',
+        url: '/v1/ngo-applications',
+        payload,
+        headers: { 'content-type': 'application/json', 'idempotency-key': 'retry-123' },
+      });
+
+    const first = await send();
+    expect(first.statusCode).toBe(201);
+    expect(first.headers['idempotent-replayed']).toBeUndefined();
+
+    // The challenge is single-use, so without the key this retry would fail.
+    const replay = await send();
+    expect(replay.statusCode).toBe(201);
+    expect(replay.headers['idempotent-replayed']).toBe('true');
+    expect(replay.json()).toEqual(first.json());
+    expect(await prisma.ngoApplication.count()).toBe(1);
+    expect(notify).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects the same Idempotency-Key with a different body', async () => {
+    const app = buildServer();
+    const body = await signedApplicationPayload(app);
+    const headers = { 'content-type': 'application/json', 'idempotency-key': 'same-key' };
+
+    const first = await app.inject({
+      method: 'POST',
+      url: '/v1/ngo-applications',
+      payload: JSON.stringify(body),
+      headers,
+    });
+    expect(first.statusCode).toBe(201);
+
+    const changed = await app.inject({
+      method: 'POST',
+      url: '/v1/ngo-applications',
+      payload: JSON.stringify({ ...body, name: 'A Different Name' }),
+      headers,
+    });
+    expect(changed.statusCode).toBe(422);
+    expect(changed.json()).toEqual({ error: 'idempotency_key_reused' });
+    expect(await prisma.ngoApplication.count()).toBe(1);
+  });
+
+  it('rejects a malformed Idempotency-Key', async () => {
+    const app = buildServer();
+    const res = await app.inject({
+      method: 'POST',
+      url: '/v1/ngo-applications',
+      payload: await signedApplicationPayload(app),
+      headers: { 'idempotency-key': 'x'.repeat(256) },
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json()).toEqual({ error: 'invalid_idempotency_key' });
+  });
+
   it('rejects a signature from another Stellar key', async () => {
     const app = buildServer();
     const response = await app.inject({

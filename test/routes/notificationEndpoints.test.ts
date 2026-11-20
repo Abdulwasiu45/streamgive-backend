@@ -1,5 +1,6 @@
 import { Keypair } from '@stellar/stellar-sdk';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { createHmac } from 'node:crypto';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { prisma } from '../../src/db.js';
 import { buildServer } from '../../src/server.js';
@@ -133,5 +134,109 @@ describe('admin notification endpoint routes', () => {
     expect(await prisma.notificationEndpoint.findUnique({ where: { id: endpoint.id } })).toBeNull();
 
     await app.close();
+  });
+
+  describe('test ping', () => {
+    // Bodyless POST: no content-type, or Fastify rejects the empty JSON body.
+    function pingHeaders(url: string) {
+      return signAdminRequest(adminKeypair, 'POST', url, String(Date.now() + timestampOffset++));
+    }
+
+    afterEach(() => {
+      vi.restoreAllMocks();
+      delete process.env.NOTIFY_WEBHOOK_TIMEOUT_MS;
+    });
+
+    async function createEndpoint(app: ReturnType<typeof buildServer>) {
+      const url = '/v1/admin/notification-endpoints';
+      const body = JSON.stringify({
+        url: 'https://8.8.8.8/hooks',
+        secret: 'ping-secret',
+        eventTypes: ['stream_created'],
+      });
+      const res = await app.inject({
+        method: 'POST',
+        url,
+        payload: body,
+        headers: signedHeaders('POST', url, body),
+      });
+      return res.json().id as string;
+    }
+
+    it('sends a signed ping and returns the status code and latency without recording a delivery', async () => {
+      const app = buildServer();
+      const id = await createEndpoint(app);
+      const fetchSpy = vi
+        .spyOn(globalThis, 'fetch')
+        .mockResolvedValue(new Response(null, { status: 204 }));
+
+      const url = `/v1/admin/notification-endpoints/${id}/test`;
+      const res = await app.inject({ method: 'POST', url, headers: pingHeaders(url) });
+
+      expect(res.statusCode).toBe(200);
+      const result = res.json();
+      expect(result).toMatchObject({ ok: true, statusCode: 204 });
+      expect(typeof result.latencyMs).toBe('number');
+
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+      const [target, init] = fetchSpy.mock.calls[0];
+      expect(target).toBe('https://8.8.8.8/hooks');
+      const headers = init?.headers as Record<string, string>;
+      const sentBody = init?.body as string;
+      expect(JSON.parse(sentBody)).toMatchObject({ type: 'ping', endpointId: id });
+      const expected = createHmac('sha256', 'ping-secret')
+        .update(`${headers['x-streamgive-timestamp']}.${headers['x-streamgive-delivery-id']}.${sentBody}`)
+        .digest('hex');
+      expect(headers['x-streamgive-signature']).toBe(`v1=${expected}`);
+
+      expect(await prisma.notificationLog.count()).toBe(0);
+      expect(await prisma.webhookDelivery.count()).toBe(0);
+      await app.close();
+    });
+
+    it('reports a failing receiver once, without retrying', async () => {
+      const app = buildServer();
+      const id = await createEndpoint(app);
+      const fetchSpy = vi
+        .spyOn(globalThis, 'fetch')
+        .mockResolvedValue(new Response('nope', { status: 500 }));
+
+      const url = `/v1/admin/notification-endpoints/${id}/test`;
+      const res = await app.inject({ method: 'POST', url, headers: pingHeaders(url) });
+
+      expect(res.json()).toMatchObject({ ok: false, statusCode: 500 });
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+      expect(await prisma.notificationLog.count()).toBe(0);
+      expect(await prisma.webhookDelivery.count()).toBe(0);
+      await app.close();
+    });
+
+    it('respects the delivery timeout', async () => {
+      process.env.NOTIFY_WEBHOOK_TIMEOUT_MS = '50';
+      const app = buildServer();
+      const id = await createEndpoint(app);
+      vi.spyOn(globalThis, 'fetch').mockImplementation(
+        (_input, init) =>
+          new Promise((_resolve, reject) => {
+            init?.signal?.addEventListener('abort', () =>
+              reject(Object.assign(new Error('timed out'), { name: 'TimeoutError' })),
+            );
+          }),
+      );
+
+      const url = `/v1/admin/notification-endpoints/${id}/test`;
+      const res = await app.inject({ method: 'POST', url, headers: pingHeaders(url) });
+
+      expect(res.json()).toMatchObject({ ok: false, statusCode: null, error: 'timeout' });
+      await app.close();
+    });
+
+    it('returns 404 for an unknown endpoint', async () => {
+      const app = buildServer();
+      const url = '/v1/admin/notification-endpoints/00000000-0000-4000-8000-000000000000/test';
+      const res = await app.inject({ method: 'POST', url, headers: pingHeaders(url) });
+      expect(res.statusCode).toBe(404);
+      await app.close();
+    });
   });
 });

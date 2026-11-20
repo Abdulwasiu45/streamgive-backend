@@ -5,6 +5,7 @@ const unitTests = [
   'test/compression.test.ts',
   'test/config.test.ts',
   'test/cors.test.ts',
+  'test/slowRequestLog.test.ts',
   'test/metrics.test.ts',
   'test/requestId.test.ts',
   'test/security-headers.test.ts',

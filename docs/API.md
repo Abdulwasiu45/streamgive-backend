@@ -81,6 +81,7 @@ lifetime. Everything else is uncached.
 | `GET /v1/streams/{id}/activity` | Yes |
 | `GET /v1/impact` | Yes |
 | `GET /v1/impact/{ngoId}` | Yes |
+| `GET /v1/impact/{ngoId}/timeseries` | Yes |
 
 Not cacheable: `GET /v1/ngos/all`, `GET /v1/ngo-applications*`, the admin
 routes, `GET /v1/donors/{address}/streams.csv`, `GET /v1/indexer/status`,
@@ -635,6 +636,31 @@ platform committed amounts per token. Returns `400 {"error":"invalid_request"}` 
 }
 ```
 
+### `GET /v1/impact/{ngoId}/timeseries`
+
+**Auth:** Public  
+**Path params:** `ngoId` (required): NGO UUID.  
+**Query params:** `from`, `to` (optional): inclusive UTC dates (`YYYY-MM-DD`).
+Defaults to the last 30 days; the range may cover at most 90 days.
+
+Per-day counts computed in SQL: streams created that day, withdrawals indexed
+that day, and their summed amount. Days with no activity are included as zeros.
+Returns `400 {"error":"range_too_large","maxDays":90}` for a longer range,
+`400 {"error":"invalid_range"}` when `from` is after `to`, and `404` for an
+unknown NGO.
+
+```json
+{
+  "ngoId": "<UUID>",
+  "from": "2026-02-01",
+  "to": "2026-02-02",
+  "days": [
+    { "date": "2026-02-01", "newStreams": 2, "withdrawals": 0, "withdrawnAmount": "0" },
+    { "date": "2026-02-02", "newStreams": 0, "withdrawals": 2, "withdrawnAmount": "100" }
+  ]
+}
+```
+
 ## NGO applications
 
 ### `POST /v1/ngo-applications/challenge`
@@ -665,6 +691,13 @@ The response contains `challenge`, `message`, and `expiresAt`.
 
 Create a challenge first, then include its `challenge` and a signature of its
 exact `message` in the application body. A challenge can be used only once.
+
+Send an optional `Idempotency-Key` header (1–255 visible ASCII characters) to
+make retries safe. Repeating the key within 24 hours with the same body returns
+the original response with `idempotent-replayed: true`; the same key with a
+different body returns `422 {"error":"idempotency_key_reused"}`, and a repeat
+while the first request is still running returns
+`409 {"error":"idempotency_request_in_progress"}`.
 Creates a pending application and returns `201` with the application record.
 Returns `400 {"error":"invalid_request"}` for an invalid body,
 `400 {"error":"invalid_or_expired_challenge"}` for a missing, used, or expired
