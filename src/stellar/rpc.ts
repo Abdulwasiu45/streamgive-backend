@@ -11,6 +11,8 @@ import { Server } from '@stellar/stellar-sdk/rpc';
 
 import { parseConfig, parseRpcUrls } from '../config.js';
 
+const LATEST_LEDGER_CACHE_TTL_MS = 5_000;
+
 export const DEFAULT_PRIMARY_RETRY_MS = 60_000;
 
 export interface RpcFailoverOptions {
@@ -98,10 +100,31 @@ const initialUrls = parseRpcUrls(process.env.SOROBAN_RPC_URL);
 export const rpcClient = new RpcFailoverClient(initialUrls);
 export const rpcServer = rpcClient.primaryServer;
 
+let latestLedgerCache: { sequence: number; expiresAt: number } | undefined;
+let latestLedgerRequest: Promise<number> | undefined;
+
 /** Latest ledger sequence the configured RPC node has ingested. */
 export async function getLatestLedgerSequence(): Promise<number> {
-  const { sequence } = await rpcClient.execute((server) => server.getLatestLedger());
-  return sequence;
+  if (latestLedgerCache && Date.now() < latestLedgerCache.expiresAt) {
+    return latestLedgerCache.sequence;
+  }
+
+  if (!latestLedgerRequest) {
+    latestLedgerRequest = rpcClient
+      .execute((server) => server.getLatestLedger())
+      .then(({ sequence }) => {
+        latestLedgerCache = {
+          sequence,
+          expiresAt: Date.now() + LATEST_LEDGER_CACHE_TTL_MS,
+        };
+        return sequence;
+      })
+      .finally(() => {
+        latestLedgerRequest = undefined;
+      });
+  }
+
+  return latestLedgerRequest;
 }
 
 /** Call a read-only Soroban contract function and return the decoded result. */

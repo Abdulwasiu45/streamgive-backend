@@ -26,7 +26,8 @@
     "db:studio": "prisma studio",
     "db:seed": "tsx prisma/seed.ts",
     "deadletters:replay": "tsx src/scripts/replayDeadLetters.ts",
-    "openapi:export": "tsx src/scripts/exportOpenApi.ts"
+    "openapi:export": "tsx src/scripts/exportOpenApi.ts",
+    "streams:rebuild": "tsx src/scripts/rebuildStreams.ts"
   },
   "dependencies": {
     "@fastify/compress": "^9.2.0",

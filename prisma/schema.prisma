@@ -30,6 +30,8 @@ model Ngo {
   name         String
   displayName  String?  @map("display_name")
   verified     Boolean  @default(false)
+  /// When the registry last approved this NGO; null while unverified.
+  verifiedAt   DateTime? @map("verified_at")
   createdAt    DateTime @default(now()) @map("created_at")
   updatedAt    DateTime @updatedAt @map("updated_at")
   streams      Stream[]
@@ -109,6 +111,23 @@ model NgoApplication {
   @@index([status])
   @@index([createdAt])
   @@map("ngo_applications")
+}
+
+/// Stored result of a write made with an `Idempotency-Key` header, so a client
+/// retrying after a timeout gets the original response instead of a duplicate.
+/// `statusCode` is null while the first request is still being processed.
+model IdempotencyRecord {
+  /// `<scope>:<client key>`, e.g. `ngo-applications:3f1c...`.
+  key         String   @id
+  /// SHA-256 of the request body, to detect a key reused with a different body.
+  requestHash String   @map("request_hash")
+  statusCode  Int?     @map("status_code")
+  response    Json?
+  createdAt   DateTime @default(now()) @map("created_at")
+  expiresAt   DateTime @map("expires_at")
+
+  @@index([expiresAt])
+  @@map("idempotency_records")
 }
 
 model NgoApplicationContactChallenge {

@@ -5,12 +5,16 @@ const unitTests = [
   'test/compression.test.ts',
   'test/config.test.ts',
   'test/cors.test.ts',
+  'test/slowRequestLog.test.ts',
   'test/metrics.test.ts',
   'test/requestId.test.ts',
   'test/security-headers.test.ts',
   'test/shutdown.test.ts',
+  'test/withTimeout.test.ts',
   'test/routes/serializeStream.test.ts',
+  'test/routes/escapeCsvField.test.ts',
   'test/scripts/replayDeadLetters.test.ts',
+  'test/scripts/rebuildStreams.test.ts',
 ];
 
 export default defineConfig({

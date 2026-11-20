@@ -6,12 +6,13 @@ import 'dotenv/config';
 import { parseConfig } from './config.js';
 import { dispatchEvent } from './indexer/dispatch.js';
 import { startIndexer } from './indexer/worker.js';
+import { logger } from './logger.js';
 import { startWebhookDeliveryWorker } from './notifications/webhookDeliveryWorker.js';
 import { buildServer } from './server.js';
 
 function fail(message: string): never {
   // Print every configuration problem at once rather than a stack trace from listen().
-  console.error(`❌ Configuration Error: ${message}`);
+  logger.error({ message }, 'Configuration Error');
   process.exit(1);
 }
 

@@ -81,6 +81,7 @@ lifetime. Everything else is uncached.
 | `GET /v1/streams/{id}/activity` | Yes |
 | `GET /v1/impact` | Yes |
 | `GET /v1/impact/{ngoId}` | Yes |
+| `GET /v1/impact/{ngoId}/timeseries` | Yes |
 
 Not cacheable: `GET /v1/ngos/all`, `GET /v1/ngo-applications*`, the admin
 routes, `GET /v1/donors/{address}/streams.csv`, `GET /v1/indexer/status`,
@@ -308,6 +309,7 @@ remain private. Returns
   "name": "Example Aid",
   "displayName": null,
   "verified": true,
+  "verifiedAt": "<ISO-8601>",
   "createdAt": "<ISO-8601>",
   "updatedAt": "<ISO-8601>",
   "registered": true,
@@ -337,6 +339,10 @@ remain private. Returns
   "recentStreamsNextCursor": null
 }
 ```
+
+`verifiedAt` is when the registry last approved the NGO, and `null` while it
+is unverified. For NGOs verified before this field existed it is backfilled
+from `updatedAt` as a best effort.
 
 `description`, `website`, and `country` are `null` when no approved
 application supplies them. The public `name` uses the display name when one
@@ -635,6 +641,31 @@ platform committed amounts per token. Returns `400 {"error":"invalid_request"}` 
 }
 ```
 
+### `GET /v1/impact/{ngoId}/timeseries`
+
+**Auth:** Public  
+**Path params:** `ngoId` (required): NGO UUID.  
+**Query params:** `from`, `to` (optional): inclusive UTC dates (`YYYY-MM-DD`).
+Defaults to the last 30 days; the range may cover at most 90 days.
+
+Per-day counts computed in SQL: streams created that day, withdrawals indexed
+that day, and their summed amount. Days with no activity are included as zeros.
+Returns `400 {"error":"range_too_large","maxDays":90}` for a longer range,
+`400 {"error":"invalid_range"}` when `from` is after `to`, and `404` for an
+unknown NGO.
+
+```json
+{
+  "ngoId": "<UUID>",
+  "from": "2026-02-01",
+  "to": "2026-02-02",
+  "days": [
+    { "date": "2026-02-01", "newStreams": 2, "withdrawals": 0, "withdrawnAmount": "0" },
+    { "date": "2026-02-02", "newStreams": 0, "withdrawals": 2, "withdrawnAmount": "100" }
+  ]
+}
+```
+
 ## NGO applications
 
 ### `POST /v1/ngo-applications/challenge`
@@ -665,6 +696,13 @@ The response contains `challenge`, `message`, and `expiresAt`.
 
 Create a challenge first, then include its `challenge` and a signature of its
 exact `message` in the application body. A challenge can be used only once.
+
+Send an optional `Idempotency-Key` header (1–255 visible ASCII characters) to
+make retries safe. Repeating the key within 24 hours with the same body returns
+the original response with `idempotent-replayed: true`; the same key with a
+different body returns `422 {"error":"idempotency_key_reused"}`, and a repeat
+while the first request is still running returns
+`409 {"error":"idempotency_request_in_progress"}`.
 Creates a pending application and returns `201` with the application record.
 Returns `400 {"error":"invalid_request"}` for an invalid body,
 `400 {"error":"invalid_or_expired_challenge"}` for a missing, used, or expired
@@ -896,6 +934,42 @@ address, resolution time, and optional note. Returns `200` with the updated
 record in `deadLetter`. Returns `404 {"error":"dead_letter_not_found"}` for an
 unknown id, `409 {"error":"dead_letter_already_resolved"}` if it is already
 resolved, and `400 {"error":"invalid_request"}` for an invalid id or body.
+
+### `GET /v1/admin/notification-logs`
+
+**Auth:** Admin signature  
+**Query params:**
+
+- `limit` (optional integer, 1–100, default 100): maximum items to return.
+- `cursor` (optional UUID): ID of the last item from the previous page.
+- `eventType` (optional string): exact event type, such as `stream_created`.
+- `channel` (optional string): exact channel, such as `webhook`, `email`, or `webhook:<endpoint id>`.
+- `success` (optional string, `true` or `false`): filter by delivery result.
+
+Returns notification delivery results from `notification_logs`, newest first,
+paginated the same way as the dead-letter list. Webhook URLs and secrets are
+never returned: rows only name the channel, and anything that looks like a URL
+in `error` is replaced with `[redacted-url]`. Returns
+`400 {"error":"invalid_request"}` for invalid query parameters.
+
+```json
+{
+  "logs": [
+    {
+      "id": "11111111-1111-4111-8111-111111111111",
+      "eventId": "0000123450-0000000001",
+      "eventType": "stream_created",
+      "channel": "webhook:22222222-2222-4222-8222-222222222222",
+      "success": false,
+      "error": "status 500",
+      "createdAt": "2026-11-20T05:00:00.000Z"
+    }
+  ],
+  "total": 1,
+  "hasMore": false,
+  "nextCursor": null
+}
+```
 
 ## Interactive API documentation
 

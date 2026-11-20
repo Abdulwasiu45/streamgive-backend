@@ -3,6 +3,7 @@ import { createHmac } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { prisma } from '../../src/db.js';
+import { logger } from '../../src/logger.js';
 import { _resetDeliveredEventIdsForTest, notify } from '../../src/notifications/service.js';
 import type { NotificationEvent } from '../../src/notifications/types.js';
 import { resetDb } from '../helpers/db.js';
@@ -59,15 +60,16 @@ describe('notify', () => {
     const webhookUrl = 'http://example.com/webhook';
     process.env.NOTIFY_WEBHOOK_URL = webhookUrl;
 
-    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const loggerErrorSpy = vi.spyOn(logger, 'error').mockImplementation(() => {});
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(
       new Response(null, { status: 500, statusText: 'Internal Server Error' }),
     );
 
     await notify(event);
 
-    expect(consoleErrorSpy).toHaveBeenCalledWith(
-      expect.stringMatching(/500.*http:\/\/example\.com$/),
+    expect(loggerErrorSpy).toHaveBeenCalledWith(
+      { status: 500, url: 'http://example.com' },
+      'webhook notification failed',
     );
   });
 
@@ -75,7 +77,7 @@ describe('notify', () => {
     process.env.NOTIFY_WEBHOOK_URL = 'https://example.com/webhook';
 
     vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('Network error'));
-    const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const loggerErrorSpy = vi.spyOn(logger, 'error').mockImplementation(() => {});
     const failedEvent: NotificationEvent = {
       type: 'ngo_revoked',
       ownerAddress: 'G1234567890',
@@ -83,12 +85,12 @@ describe('notify', () => {
     };
 
     await expect(notify(failedEvent)).resolves.not.toThrow();
-    expect(consoleSpy).toHaveBeenCalled();
+    expect(loggerErrorSpy).toHaveBeenCalled();
   });
 
   it('writes a failure record when webhook returns non-2xx', async () => {
     process.env.NOTIFY_WEBHOOK_URL = 'http://example.com/webhook';
-    vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.spyOn(logger, 'error').mockImplementation(() => {});
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(
       new Response(null, { status: 500, statusText: 'Internal Server Error' }),
     );
@@ -119,7 +121,7 @@ describe('notify', () => {
   it('aborts a webhook that does not respond within the configured timeout', async () => {
     process.env.NOTIFY_WEBHOOK_URL = 'http://example.com/webhook';
     process.env.NOTIFY_WEBHOOK_TIMEOUT_MS = '5';
-    vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.spyOn(logger, 'error').mockImplementation(() => {});
     const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation((_url, init) => {
       const signal = init?.signal;
       return new Promise<Response>((_resolve, reject) => {
@@ -142,7 +144,7 @@ describe('notify', () => {
   });
 
   it('writes an email record on every notify call', async () => {
-    vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(logger, 'info').mockImplementation(() => {});
 
     await notify(event);
 
@@ -254,7 +256,7 @@ describe('notify', () => {
   describe('delivery deduplication and retry (#270)', () => {
     it('retries delivery when a previous send attempt failed', async () => {
       process.env.NOTIFY_WEBHOOK_URL = 'http://example.com/webhook';
-      vi.spyOn(console, 'error').mockImplementation(() => {});
+      vi.spyOn(logger, 'error').mockImplementation(() => {});
 
       // First call fails with 500 error
       const fetchSpy = vi
@@ -321,7 +323,7 @@ describe('notify', () => {
 
     it('persists failed attempts and gives up after the configured maximum', async () => {
       process.env.NOTIFY_WEBHOOK_URL = 'http://example.com/webhook';
-      vi.spyOn(console, 'error').mockImplementation(() => {});
+      vi.spyOn(logger, 'error').mockImplementation(() => {});
       const fetchSpy = vi
         .spyOn(globalThis, 'fetch')
         .mockResolvedValue(new Response(null, { status: 503 }));
@@ -357,7 +359,7 @@ describe('notify', () => {
 
     it('retries persisted deliveries in the worker after a later due time', async () => {
       process.env.NOTIFY_WEBHOOK_URL = 'http://example.com/webhook';
-      vi.spyOn(console, 'error').mockImplementation(() => {});
+      vi.spyOn(logger, 'error').mockImplementation(() => {});
       const fetchSpy = vi
         .spyOn(globalThis, 'fetch')
         .mockResolvedValueOnce(new Response(null, { status: 500 }))
@@ -403,7 +405,7 @@ describe('notify', () => {
       const fetchSpy = vi
         .spyOn(globalThis, 'fetch')
         .mockResolvedValue(new Response(null, { status: 204 }));
-      vi.spyOn(console, 'log').mockImplementation(() => {});
+      vi.spyOn(logger, 'info').mockImplementation(() => {});
       return fetchSpy;
     }
 

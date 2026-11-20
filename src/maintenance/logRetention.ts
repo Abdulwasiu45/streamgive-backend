@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 
 import { prisma } from '../db.js';
+import { logger } from '../logger.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_RETENTION_DAYS = 90;
@@ -33,10 +34,10 @@ export function registerLogRetention(app: FastifyInstance): void {
       try {
         const removed = await pruneOldLogs();
         if (removed.notifications || removed.deadLetters) {
-          console.info('pruned expired logs', removed);
+          logger.info(removed, 'pruned expired logs');
         }
       } catch (error) {
-        console.error('failed to prune expired logs', error);
+        logger.error({ err: error }, 'failed to prune expired logs');
       }
     };
 

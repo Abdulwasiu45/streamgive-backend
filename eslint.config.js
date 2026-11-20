@@ -22,4 +22,11 @@ export default tseslint.config(
   js.configs.recommended,
   ...tseslint.configs.recommended,
   eslintConfigPrettier,
+  {
+    files: ['src/**/*.{js,ts}'],
+    ignores: ['src/scripts/**'],
+    rules: {
+      'no-console': 'error',
+    },
+  },
 );

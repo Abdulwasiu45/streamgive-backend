@@ -13,6 +13,8 @@ export const DEFAULT_LOG_RETENTION_DAYS = 30;
 export const DEFAULT_RATE_LIMIT_APPLICATION_MAX = 5;
 export const DEFAULT_RATE_LIMIT_APPLICATION_WINDOW = '1 minute';
 export const DEFAULT_NOTIFY_WEBHOOK_TIMEOUT_MS = 5000;
+export const DEFAULT_SLOW_REQUEST_THRESHOLD_MS = 1000;
+export const MAINTENANCE_RETRY_AFTER_SECONDS = 300;
 
 /** Undefined, empty and whitespace-only values are treated as unset. */
 function configured(value: string | undefined): string | undefined {
@@ -358,6 +360,28 @@ export const configSchema = z.object({
     .string()
     .optional()
     .transform((v) => configured(v)),
+  MAINTENANCE_MODE: z
+    .string()
+    .optional()
+    .transform((value, ctx) => {
+      try {
+        return parseMaintenanceMode(value);
+      } catch (err) {
+        ctx.addIssue({ code: 'custom', message: (err as Error).message });
+        return z.NEVER;
+      }
+    }),
+  SLOW_REQUEST_THRESHOLD_MS: z
+    .string()
+    .optional()
+    .transform((value, ctx) => {
+      try {
+        return parseSlowRequestThresholdMs(value);
+      } catch (err) {
+        ctx.addIssue({ code: 'custom', message: (err as Error).message });
+        return z.NEVER;
+      }
+    }),
 });
 
 export type AppConfig = z.infer<typeof configSchema>;
@@ -386,4 +410,38 @@ export function parseConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     throw new ConfigError(issues);
   }
   return result.data;
+}
+
+/**
+ * Validates MAINTENANCE_MODE. Only `true`/`false`/`1`/`0` are accepted, so a
+ * typo fails startup instead of silently leaving writes open.
+ */
+export function parseMaintenanceMode(value: string | undefined): boolean {
+  const raw = configured(value)?.toLowerCase();
+  if (raw === undefined || raw === 'false' || raw === '0') {
+    return false;
+  }
+  if (raw === 'true' || raw === '1') {
+    return true;
+  }
+  throw new Error(`MAINTENANCE_MODE must be "true" or "false", received "${value?.trim()}"`);
+}
+
+/**
+ * Validates SLOW_REQUEST_THRESHOLD_MS: requests slower than this are logged
+ * as warnings. `0` turns the warning off.
+ */
+export function parseSlowRequestThresholdMs(value: string | undefined): number {
+  const raw = configured(value);
+  if (raw === undefined) {
+    return DEFAULT_SLOW_REQUEST_THRESHOLD_MS;
+  }
+
+  if (!/^\d+$/.test(raw) || !Number.isSafeInteger(Number(raw))) {
+    throw new Error(
+      `SLOW_REQUEST_THRESHOLD_MS must be a non-negative integer (milliseconds), received "${raw}"`,
+    );
+  }
+
+  return Number(raw);
 }

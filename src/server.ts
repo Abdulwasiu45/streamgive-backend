@@ -9,7 +9,7 @@ import Fastify from 'fastify';
 import type { FastifyError, FastifyReply } from 'fastify';
 import packageJson from '../package.json' with { type: 'json' };
 
-import { parseConfig } from './config.js';
+import { MAINTENANCE_RETRY_AFTER_SECONDS, parseConfig } from './config.js';
 import { prisma } from './db.js';
 import { requireAdminSignature } from './middleware/adminAuth.js';
 import { recordHttpRequest, renderMetrics } from './metrics.js';
@@ -22,6 +22,7 @@ import { ngoApplicationRoutes } from './routes/ngoApplications.js';
 import { ngoRoutes } from './routes/ngos.js';
 import { deadLetterRoutes } from './routes/deadLetters.js';
 import { notificationEndpointRoutes } from './routes/notificationEndpoints.js';
+import { notificationLogRoutes } from './routes/notificationLogs.js';
 import { streamRoutes } from './routes/streams.js';
 import { tokenRoutes } from './routes/tokens.js';
 import { registerRequestIdHeader, requestIdOptions } from './requestId.js';
@@ -102,12 +103,37 @@ export interface BuildServerOptions {
   trustProxy?: TrustProxySetting;
 }
 
+/**
+ * Races a promise against a timeout.  Rejects with a TimeoutError when the
+ * deadline is reached so callers can treat it the same as any other failure.
+ */
+export function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(
+      () => reject(new Error(`health check timed out after ${ms} ms`)),
+      ms,
+    );
+    promise.then(
+      (v) => {
+        clearTimeout(timer);
+        resolve(v);
+      },
+      (e) => {
+        clearTimeout(timer);
+        reject(e);
+      },
+    );
+  });
+}
+
 export function buildServer(options?: BuildServerOptions) {
   const requestStartedAt = new WeakMap<object, bigint>();
   const cfg = parseConfig(process.env);
   const bodyLimit = cfg.BODY_LIMIT_BYTES;
   const rateLimitMax = cfg.RATE_LIMIT_MAX;
   const rateLimitWindow = cfg.RATE_LIMIT_WINDOW;
+  const slowRequestThresholdMs = cfg.SLOW_REQUEST_THRESHOLD_MS;
+  const maintenanceMode = cfg.MAINTENANCE_MODE;
   const trustProxySetting =
     options?.trustProxy !== undefined
       ? options.trustProxy
@@ -264,6 +290,21 @@ export function buildServer(options?: BuildServerOptions) {
 
   app.log.info({ max: rateLimitMax, timeWindow: rateLimitWindow }, 'global rate limit configured');
 
+  // Maintenance mode stops writes during a migration or RPC incident while
+  // reads, health checks and CORS preflights keep working.
+  if (maintenanceMode) {
+    app.log.warn('maintenance mode is on: write requests answer 503');
+    const readMethods = new Set(['GET', 'HEAD', 'OPTIONS']);
+    app.addHook('onRequest', async (request, reply) => {
+      if (!readMethods.has(request.method)) {
+        return reply
+          .code(503)
+          .header('retry-after', String(MAINTENANCE_RETRY_AFTER_SECONDS))
+          .send({ error: 'maintenance' });
+      }
+    });
+  }
+
   // Root routes are declared before the limiter plugin's global onRoute hook runs.
   const rootRateLimitedRoutes = new Set(['/metrics', '/health', '/health/ready']);
   app.addHook('onRequest', async (request, reply) => {
@@ -282,12 +323,25 @@ export function buildServer(options?: BuildServerOptions) {
     const startedAt = requestStartedAt.get(request);
     if (startedAt === undefined) return;
     const durationSeconds = Number(process.hrtime.bigint() - startedAt) / 1_000_000_000;
-    recordHttpRequest(
-      request.method,
-      request.routeOptions.url ?? 'unmatched',
-      reply.statusCode,
-      durationSeconds,
-    );
+    const route = request.routeOptions.url ?? 'unmatched';
+    recordHttpRequest(request.method, route, reply.statusCode, durationSeconds);
+
+    const durationMs = Math.round(durationSeconds * 1000);
+    if (slowRequestThresholdMs > 0 && durationMs > slowRequestThresholdMs) {
+      // Route template (not the raw URL) so ids and query strings never leak
+      // into logs and slow requests group by endpoint.
+      app.log.warn(
+        {
+          reqId: request.id,
+          method: request.method,
+          route,
+          statusCode: reply.statusCode,
+          durationMs,
+          thresholdMs: slowRequestThresholdMs,
+        },
+        'slow request',
+      );
+    }
   });
 
   /**
@@ -348,23 +402,6 @@ export function buildServer(options?: BuildServerOptions) {
     app.register(swaggerUi, {
       routePrefix: '/docs',
       uiConfig: { docExpansion: 'list', deepLinking: false },
-    });
-  }
-
-  /**
-   * Races a promise against a timeout.  Rejects with a TimeoutError when the
-   * deadline is reached so callers can treat it the same as any other failure.
-   */
-  function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
-    return new Promise<T>((resolve, reject) => {
-      const timer = setTimeout(
-        () => reject(new Error(`health check timed out after ${ms} ms`)),
-        ms,
-      );
-      promise.then(
-        (v) => { clearTimeout(timer); resolve(v); },
-        (e) => { clearTimeout(timer); reject(e); },
-      );
     });
   }
 
@@ -521,6 +558,7 @@ export function buildServer(options?: BuildServerOptions) {
   app.register(indexerStatusRoutes, apiPrefix);
   app.register(deadLetterRoutes, apiPrefix);
   app.register(notificationEndpointRoutes, apiPrefix);
+  app.register(notificationLogRoutes, apiPrefix);
   registerLogRetention(app);
 
   return app;

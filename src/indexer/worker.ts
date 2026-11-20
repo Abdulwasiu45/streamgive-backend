@@ -4,6 +4,7 @@ import {
   recordIndexerEventsSkipped,
   recordIndexerPosition,
 } from '../metrics.js';
+import { logger } from '../logger.js';
 import { getLatestLedgerSequence, rpcServer } from '../stellar/rpc.js';
 import { getCheckpointState, saveCheckpoint } from './checkpoint.js';
 import { WATCHED_CONTRACT_IDS } from './contracts.js';
@@ -186,10 +187,9 @@ export async function pollOnce(handleEvent: EventHandler): Promise<void> {
     }));
   } catch (err: unknown) {
     if (isLedgerOutOfRange(err)) {
-      console.warn(
-        `indexer: checkpoint ${lastProcessedLedger} has aged out of the RPC's` +
-          ` retention window — skipping to ledger ${latestLedger}. Events in` +
-          ` between were missed and will not be indexed.`,
+      logger.warn(
+        { checkpointLedger: lastProcessedLedger, latestLedger },
+        'indexer checkpoint has aged out of the RPC retention window; skipping the unavailable ledger range',
       );
 
       lastProcessedLedger = latestLedger;
@@ -219,18 +219,16 @@ export async function pollOnce(handleEvent: EventHandler): Promise<void> {
       recordIndexerEventProcessed();
     } catch (err: unknown) {
       if (isDecodeOrValidationError(err)) {
-        console.error(
-          `indexer: event ${event.id} at ledger ${event.ledger} could not be` +
-            ` processed (decode/validation error) — recording it as a dead letter and skipping it`,
-          err,
+        logger.error(
+          { err, eventId: event.id, ledger: event.ledger },
+          'indexer event could not be processed; recording it as a dead letter and skipping it',
         );
         await recordDeadLetter(event, err);
         recordIndexerEventDeadLettered();
       } else {
-        console.error(
-          `indexer: handler failed transiently for event ${event.id} at ledger ${event.ledger} — ` +
-            `will retry with backoff without advancing checkpoint`,
-          err,
+        logger.error(
+          { err, eventId: event.id, ledger: event.ledger },
+          'indexer handler failed transiently; retrying without advancing checkpoint',
         );
         throw err;
       }
@@ -257,8 +255,8 @@ export function startIndexer(handleEvent: EventHandler): () => Promise<void> {
     // Expected on a fresh local setup before contracts are deployed, not a
     // bug — pollOnce() no-ops until at least one contract id is set. Logged
     // once here (rather than every poll) so it's visible without being noisy.
-    console.warn(
-      'indexer: NGO_REGISTRY_CONTRACT_ID and DONATION_VAULT_CONTRACT_ID are both unset — no-op until at least one is set. See ENVIRONMENT.md.',
+    logger.warn(
+      'NGO_REGISTRY_CONTRACT_ID and DONATION_VAULT_CONTRACT_ID are both unset; indexer is idle until one is set',
     );
   }
 
@@ -310,15 +308,18 @@ export function startIndexer(handleEvent: EventHandler): () => Promise<void> {
         consecutivePollFailures += 1;
 
         if (consecutivePollFailures >= INDEXER_FAILURE_ESCALATION_THRESHOLD) {
-          console.error('indexer poll failure threshold exceeded', {
-            consecutiveFailures: consecutivePollFailures,
-            error: err,
-          });
+          logger.error(
+            { consecutiveFailures: consecutivePollFailures, err },
+            'indexer poll failure threshold exceeded',
+          );
         } else {
-          console.error(
-            `indexer poll failed (${consecutiveFailures} in a row) — ` +
-              `retrying in ${backoffDelayMs(consecutiveFailures)}ms`,
-            err,
+          logger.error(
+            {
+              consecutiveFailures,
+              retryDelayMs: backoffDelayMs(consecutiveFailures),
+              err,
+            },
+            'indexer poll failed; retrying with backoff',
           );
         }
       } finally {

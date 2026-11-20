@@ -176,6 +176,15 @@ Two further sources of duplicate-looking work:
   observations of new state where practical, or buffer them until the stream
   exists, rather than assuming creation always arrives first.
 
+## Testing an endpoint
+
+After adding or editing a receiver, an admin can send it a test event with
+`POST /v1/admin/notification-endpoints/{id}/test`. The receiver gets a normal
+signed request whose body is `{"type":"ping","endpointId":"...","sentAt":"..."}`
+and whose delivery id starts with `ping-`. The response reports
+`{ ok, statusCode, latencyMs, deliveryId, error? }`. A ping uses the normal
+delivery timeout, is never retried, and is not recorded as a delivery.
+
 ## Inspecting failures
 
 Delivery results are recorded on the StreamGive side, not retried against your
