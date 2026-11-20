@@ -1,12 +1,16 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  ConfigError,
   DEFAULT_PORT,
   DEFAULT_RATE_LIMIT_MAX,
   DEFAULT_RATE_LIMIT_WINDOW,
+  DEFAULT_SOROBAN_RPC_URL,
+  parseConfig,
   parsePort,
   parseRateLimitMax,
   parseRateLimitWindow,
+  parseRpcUrls,
 } from '../src/config.js';
 
 describe('parsePort', () => {
@@ -84,5 +88,65 @@ describe('parseRateLimitWindow', () => {
   it('rejects zero and negative durations', () => {
     expect(() => parseRateLimitWindow('0')).toThrow(/RATE_LIMIT_WINDOW/);
     expect(() => parseRateLimitWindow('-5')).toThrow(/RATE_LIMIT_WINDOW/);
+  });
+});
+
+describe('parseRpcUrls', () => {
+  it('uses the default testnet RPC when unset or blank', () => {
+    expect(parseRpcUrls(undefined)).toEqual([DEFAULT_SOROBAN_RPC_URL]);
+    expect(parseRpcUrls('')).toEqual([DEFAULT_SOROBAN_RPC_URL]);
+    expect(parseRpcUrls(' , , ')).toEqual([DEFAULT_SOROBAN_RPC_URL]);
+  });
+
+  it('parses a comma-separated list of http(s) URLs in order', () => {
+    expect(
+      parseRpcUrls('https://rpc-1.example.com, https://rpc-2.example.com, http://localhost:8000'),
+    ).toEqual([
+      'https://rpc-1.example.com',
+      'https://rpc-2.example.com',
+      'http://localhost:8000',
+    ]);
+  });
+
+  it('rejects invalid or non-http(s) URLs', () => {
+    expect(() => parseRpcUrls('not-a-url')).toThrow(/SOROBAN_RPC_URL/);
+    expect(() => parseRpcUrls('https://ok.example.com, ftp://bad.example.com')).toThrow(
+      /SOROBAN_RPC_URL/,
+    );
+  });
+});
+
+describe('parseConfig', () => {
+  it('returns typed defaults when environment is empty', () => {
+    const cfg = parseConfig({});
+    expect(cfg.NODE_ENV).toBe('development');
+    expect(cfg.PORT).toBe(DEFAULT_PORT);
+    expect(cfg.RATE_LIMIT_MAX).toBe(DEFAULT_RATE_LIMIT_MAX);
+    expect(cfg.RATE_LIMIT_WINDOW).toBe(DEFAULT_RATE_LIMIT_WINDOW);
+    expect(cfg.SOROBAN_RPC_URL).toEqual([DEFAULT_SOROBAN_RPC_URL]);
+  });
+
+  it('reports every invalid variable at once in a ConfigError', () => {
+    let caught: unknown;
+    try {
+      parseConfig({
+        NODE_ENV: 'staging',
+        PORT: 'not-a-port',
+        RATE_LIMIT_MAX: '0',
+        RATE_LIMIT_WINDOW: 'fortnight',
+        SOROBAN_RPC_URL: 'ftp://invalid.example.com',
+      });
+    } catch (err) {
+      caught = err;
+    }
+
+    expect(caught).toBeInstanceOf(ConfigError);
+    const error = caught as ConfigError;
+    expect(error.issues).toHaveLength(5);
+    expect(error.message).toContain('NODE_ENV');
+    expect(error.message).toContain('PORT');
+    expect(error.message).toContain('RATE_LIMIT_MAX');
+    expect(error.message).toContain('RATE_LIMIT_WINDOW');
+    expect(error.message).toContain('SOROBAN_RPC_URL');
   });
 });

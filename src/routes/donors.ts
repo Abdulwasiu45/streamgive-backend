@@ -152,6 +152,106 @@ export async function donorRoutes(app: FastifyInstance): Promise<void> {
   });
 
   /**
+   * Lists the distinct NGOs a donor supports, with stream counts and committed/withdrawn
+   * totals grouped by token.
+   * @route GET /v1/donors/:address/ngos
+   * @param address Stellar public key
+   * @auth Public
+   * @returns 200 `{ ngos: DonorNgoSummary[] }`; 400 invalid address; 404 `{ error: "not_found" }`.
+   */
+  app.get('/donors/:address/ngos', async (request, reply) => {
+    const parsedParams = addressParamSchema.safeParse(request.params);
+    if (!parsedParams.success) {
+      return reply.code(400).send({ error: 'invalid_request' });
+    }
+
+    const donor = await prisma.donor.findUnique({
+      where: { address: parsedParams.data.address },
+      include: {
+        streams: {
+          include: {
+            ngo: {
+              select: {
+                id: true,
+                name: true,
+                displayName: true,
+                ownerAddress: true,
+                verified: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    if (!donor) {
+      return reply.code(404).send({ error: 'not_found' });
+    }
+
+    const byNgo = new Map<
+      string,
+      {
+        ngoId: string;
+        name: string | null;
+        displayName: string | null;
+        ownerAddress: string;
+        verified: boolean;
+        streamCount: number;
+        activeStreamCount: number;
+        tokens: Map<string, { committed: bigint; withdrawn: bigint }>;
+      }
+    >();
+
+    for (const stream of donor.streams) {
+      let entry = byNgo.get(stream.ngoId);
+      if (!entry) {
+        entry = {
+          ngoId: stream.ngo.id,
+          name: stream.ngo.name,
+          displayName: stream.ngo.displayName,
+          ownerAddress: stream.ngo.ownerAddress,
+          verified: stream.ngo.verified,
+          streamCount: 0,
+          activeStreamCount: 0,
+          tokens: new Map(),
+        };
+        byNgo.set(stream.ngoId, entry);
+      }
+
+      entry.streamCount += 1;
+      if (stream.status === 'ACTIVE') {
+        entry.activeStreamCount += 1;
+      }
+
+      const committed =
+        stream.status === 'CANCELLED'
+          ? BigInt(stream.withdrawn)
+          : BigInt(stream.balance) + BigInt(stream.withdrawn);
+      const withdrawn = BigInt(stream.withdrawn);
+      const existing = entry.tokens.get(stream.tokenAddress) ?? { committed: 0n, withdrawn: 0n };
+      entry.tokens.set(stream.tokenAddress, {
+        committed: existing.committed + committed,
+        withdrawn: existing.withdrawn + withdrawn,
+      });
+    }
+
+    const ngos = [...byNgo.values()]
+      .map(({ tokens, ...ngo }) => ({
+        ...ngo,
+        totalsByToken: [...tokens.entries()]
+          .sort(([left], [right]) => left.localeCompare(right))
+          .map(([tokenAddress, totals]) => ({
+            tokenAddress,
+            committed: totals.committed.toString(),
+            withdrawn: totals.withdrawn.toString(),
+          })),
+      }))
+      .sort((left, right) => left.ngoId.localeCompare(right.ngoId));
+
+    return sendPublicCacheable(request, reply, { ngos });
+  });
+
+  /**
    * Helper to escape a value for CSV with RFC 4180 rules and formula injection protection.
    */
   function escapeCsvField(value: unknown): string {
