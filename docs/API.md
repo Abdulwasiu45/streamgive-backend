@@ -309,6 +309,7 @@ remain private. Returns
   "name": "Example Aid",
   "displayName": null,
   "verified": true,
+  "verifiedAt": "<ISO-8601>",
   "createdAt": "<ISO-8601>",
   "updatedAt": "<ISO-8601>",
   "registered": true,
@@ -338,6 +339,10 @@ remain private. Returns
   "recentStreamsNextCursor": null
 }
 ```
+
+`verifiedAt` is when the registry last approved the NGO, and `null` while it
+is unverified. For NGOs verified before this field existed it is backfilled
+from `updatedAt` as a best effort.
 
 `description`, `website`, and `country` are `null` when no approved
 application supplies them. The public `name` uses the display name when one
@@ -929,6 +934,42 @@ address, resolution time, and optional note. Returns `200` with the updated
 record in `deadLetter`. Returns `404 {"error":"dead_letter_not_found"}` for an
 unknown id, `409 {"error":"dead_letter_already_resolved"}` if it is already
 resolved, and `400 {"error":"invalid_request"}` for an invalid id or body.
+
+### `GET /v1/admin/notification-logs`
+
+**Auth:** Admin signature  
+**Query params:**
+
+- `limit` (optional integer, 1–100, default 100): maximum items to return.
+- `cursor` (optional UUID): ID of the last item from the previous page.
+- `eventType` (optional string): exact event type, such as `stream_created`.
+- `channel` (optional string): exact channel, such as `webhook`, `email`, or `webhook:<endpoint id>`.
+- `success` (optional string, `true` or `false`): filter by delivery result.
+
+Returns notification delivery results from `notification_logs`, newest first,
+paginated the same way as the dead-letter list. Webhook URLs and secrets are
+never returned: rows only name the channel, and anything that looks like a URL
+in `error` is replaced with `[redacted-url]`. Returns
+`400 {"error":"invalid_request"}` for invalid query parameters.
+
+```json
+{
+  "logs": [
+    {
+      "id": "11111111-1111-4111-8111-111111111111",
+      "eventId": "0000123450-0000000001",
+      "eventType": "stream_created",
+      "channel": "webhook:22222222-2222-4222-8222-222222222222",
+      "success": false,
+      "error": "status 500",
+      "createdAt": "2026-11-20T05:00:00.000Z"
+    }
+  ],
+  "total": 1,
+  "hasMore": false,
+  "nextCursor": null
+}
+```
 
 ## Interactive API documentation
 

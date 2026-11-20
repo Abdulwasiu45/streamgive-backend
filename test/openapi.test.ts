@@ -31,6 +31,7 @@ describe('OpenAPI documentation', () => {
       ['/v1/admin/notification-endpoints', 'post'],
       ['/v1/admin/notification-endpoints/{id}', 'patch'],
       ['/v1/admin/notification-endpoints/{id}', 'delete'],
+      ['/v1/admin/notification-logs', 'get'],
     ] as const;
     for (const [path, method] of adminOperations) {
       expect(spec.paths?.[path]?.[method]).toHaveProperty('security', [

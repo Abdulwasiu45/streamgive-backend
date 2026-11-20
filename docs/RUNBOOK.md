@@ -165,6 +165,22 @@ WHERE event_id = '<event id>';
 Record why in the incident notes. This is appropriate only when the event is
 known to be irrelevant (for example, a duplicate of another event).
 
+## Rebuild stream state
+
+Every applied donation-vault event is stored in `stream_events`, so a stream
+row can be recomputed from them:
+
+```bash
+npm run streams:rebuild -- --dry-run
+```
+
+The dry run recomputes `balance`, `withdrawn` and `status` for every stream,
+prints each row that differs from its events, and changes nothing. It exits
+non-zero when any row differs, so it also works as a consistency check. Run it
+without `--dry-run` to write the recomputed values to the differing rows.
+Streams with no stored `created` event (indexed before `stream_events`
+existed) are listed and skipped.
+
 ## Full reindex or backfill
 
 The indexer has no built-in "reindex" mode. A reindex means starting the

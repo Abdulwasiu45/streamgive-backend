@@ -69,6 +69,26 @@ describe('handleNgoRegistryEvent', () => {
     expect(streamEvent?.payload).toMatchObject({ ownerAddress: owner });
   });
 
+  it('records when an NGO was verified and clears it on revoke', async () => {
+    const owner = fakeAddress('V');
+    await prisma.ngo.create({ data: { ownerAddress: owner, name: 'Water Aid' } });
+    const ledgerClosedAt = '2026-11-01T12:00:00.000Z';
+
+    await handleNgoRegistryEvent(
+      makeEvent([symbolScVal('approved'), addressScVal(owner)], stringScVal(''), {
+        ledgerClosedAt,
+      }),
+    );
+    let ngo = await prisma.ngo.findUnique({ where: { ownerAddress: owner } });
+    expect(ngo?.verifiedAt?.toISOString()).toBe(ledgerClosedAt);
+
+    await handleNgoRegistryEvent(
+      makeEvent([symbolScVal('revoked'), addressScVal(owner)], stringScVal('')),
+    );
+    ngo = await prisma.ngo.findUnique({ where: { ownerAddress: owner } });
+    expect(ngo?.verifiedAt).toBeNull();
+  });
+
   it('is a no-op for an approved event with no matching NGO', async () => {
     const owner = fakeAddress('C');
 

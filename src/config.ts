@@ -11,6 +11,7 @@ export const DEFAULT_PORT = 3000;
 export const DEFAULT_RATE_LIMIT_MAX = 100;
 export const DEFAULT_RATE_LIMIT_WINDOW = '1 minute';
 export const DEFAULT_SLOW_REQUEST_THRESHOLD_MS = 1000;
+export const MAINTENANCE_RETRY_AFTER_SECONDS = 300;
 
 /** Undefined, empty and whitespace-only values are treated as unset. */
 function configured(value: string | undefined): string | undefined {
@@ -90,6 +91,21 @@ export function parseRateLimitWindow(value: string | undefined): string {
   }
 
   return raw;
+}
+
+/**
+ * Validates MAINTENANCE_MODE. Only `true`/`false`/`1`/`0` are accepted, so a
+ * typo fails startup instead of silently leaving writes open.
+ */
+export function parseMaintenanceMode(value: string | undefined): boolean {
+  const raw = configured(value)?.toLowerCase();
+  if (raw === undefined || raw === 'false' || raw === '0') {
+    return false;
+  }
+  if (raw === 'true' || raw === '1') {
+    return true;
+  }
+  throw new Error(`MAINTENANCE_MODE must be "true" or "false", received "${value?.trim()}"`);
 }
 
 /**
