@@ -120,3 +120,28 @@ describe('unhandledRejection policy', () => {
     expect(exitSpy).toHaveBeenCalledWith(1);
   });
 });
+
+describe('uncaughtException policy', () => {
+  let exitSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    // Prevent process.exit from terminating the test runner.
+    exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
+  });
+
+  afterEach(() => {
+    exitSpy.mockRestore();
+  });
+
+  it('logs the error and exits with code 1 when an uncaught exception occurs', () => {
+    const error = new Error('fatal synchronous crash');
+    process.emit('uncaughtException', error);
+
+    expect(mockApp.log.error).toHaveBeenCalledWith(
+      expect.objectContaining({ err: error }),
+      'uncaught exception',
+    );
+    expect(exitSpy).toHaveBeenCalledWith(1);
+  });
+});

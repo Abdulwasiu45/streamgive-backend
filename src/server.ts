@@ -117,6 +117,29 @@ function configuredBodyLimit(): number {
   return parsed;
 }
 
+/**
+ * Races a promise against a timeout.  Rejects with a TimeoutError when the
+ * deadline is reached so callers can treat it the same as any other failure.
+ */
+export function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(
+      () => reject(new Error(`health check timed out after ${ms} ms`)),
+      ms,
+    );
+    promise.then(
+      (v) => {
+        clearTimeout(timer);
+        resolve(v);
+      },
+      (e) => {
+        clearTimeout(timer);
+        reject(e);
+      },
+    );
+  });
+}
+
 export function buildServer(options?: BuildServerOptions) {
   const requestStartedAt = new WeakMap<object, bigint>();
   const bodyLimit = configuredBodyLimit();
@@ -382,23 +405,6 @@ export function buildServer(options?: BuildServerOptions) {
     app.register(swaggerUi, {
       routePrefix: '/docs',
       uiConfig: { docExpansion: 'list', deepLinking: false },
-    });
-  }
-
-  /**
-   * Races a promise against a timeout.  Rejects with a TimeoutError when the
-   * deadline is reached so callers can treat it the same as any other failure.
-   */
-  function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
-    return new Promise<T>((resolve, reject) => {
-      const timer = setTimeout(
-        () => reject(new Error(`health check timed out after ${ms} ms`)),
-        ms,
-      );
-      promise.then(
-        (v) => { clearTimeout(timer); resolve(v); },
-        (e) => { clearTimeout(timer); reject(e); },
-      );
     });
   }
 
