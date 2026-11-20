@@ -26,6 +26,7 @@ import { indexerStatusRoutes } from './routes/indexerStatus.js';
 import { getLatestLedgerSequence } from './stellar/rpc.js';
 import { ngoApplicationRoutes } from './routes/ngoApplications.js';
 import { ngoRoutes } from './routes/ngos.js';
+import { getBuildVersionInfo } from './version.js';
 import { deadLetterRoutes } from './routes/deadLetters.js';
 import { notificationEndpointRoutes } from './routes/notificationEndpoints.js';
 import { notificationLogRoutes } from './routes/notificationLogs.js';
@@ -496,6 +497,33 @@ export function buildServer(options?: BuildServerOptions) {
     }
   });
 
+  /**
+   * Returns build metadata (package version, git commit, and build time) with no secrets.
+   * @route GET /version
+   * @auth Public
+   */
+  app.get(
+    '/version',
+    {
+      schema: {
+        tags: ['System'],
+        summary: 'Get build version and commit metadata',
+        response: {
+          200: {
+            type: 'object',
+            properties: {
+              version: { type: 'string' },
+              commit: { type: 'string' },
+              buildTime: { type: ['string', 'null'] },
+            },
+            required: ['version', 'commit', 'buildTime'],
+          },
+        },
+      },
+    },
+    async () => getBuildVersionInfo(),
+  );
+
   app.addHook('onRoute', (route) => {
     const preHandlers = Array.isArray(route.preHandler)
       ? route.preHandler
@@ -525,6 +553,19 @@ export function buildServer(options?: BuildServerOptions) {
             limit: { type: 'integer', minimum: 1, maximum: 100, default: 100 },
             cursor: { type: 'string', format: 'uuid' },
             sort: { type: 'string', enum: ['newest', 'oldest', 'name'], default: 'newest' },
+            q: { type: 'string', maxLength: 100 },
+          },
+        },
+      },
+      '/v1/ngos/all': {
+        tags: ['NGOs'],
+        summary: 'List all NGOs for admin review',
+        querystring: {
+          type: 'object',
+          properties: {
+            limit: { type: 'integer', minimum: 1, maximum: 100, default: 100 },
+            cursor: { type: 'string', format: 'uuid' },
+            verified: { type: 'string', enum: ['true', 'false'] },
             q: { type: 'string', maxLength: 100 },
           },
         },

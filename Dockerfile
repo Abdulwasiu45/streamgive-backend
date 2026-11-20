@@ -15,7 +15,9 @@ RUN npm run build
 # ---- runtime: production deps only, non-root, no build tooling ----
 FROM node:22-slim AS runtime
 WORKDIR /app
-ENV NODE_ENV=production
+ARG GIT_COMMIT=unknown
+ARG BUILD_TIME=
+ENV NODE_ENV=production GIT_COMMIT=${GIT_COMMIT} BUILD_TIME=${BUILD_TIME}
 
 RUN addgroup --system --gid 1001 nodejs \
   && adduser --system --uid 1001 --ingroup nodejs streamgive
