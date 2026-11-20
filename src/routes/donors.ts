@@ -1,3 +1,5 @@
+import { Readable } from 'node:stream';
+
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 
@@ -22,6 +24,7 @@ const querySchema = z.object({
 const addressParamSchema = z.object({
   address: z.string().regex(/^G[A-Z2-7]{55}$/),
 });
+const STREAMS_CSV_BATCH_SIZE = 500;
 
 export async function donorRoutes(app: FastifyInstance): Promise<void> {
   /**
@@ -191,14 +194,6 @@ export async function donorRoutes(app: FastifyInstance): Promise<void> {
       return reply.code(404).send({ error: 'not_found' });
     }
 
-    const streams = await prisma.stream.findMany({
-      where: { donorId: donor.id },
-      orderBy: { createdAt: 'desc' },
-      include: {
-        ngo: { select: { id: true, name: true, displayName: true, ownerAddress: true } },
-      },
-    });
-
     const headers = [
       'id',
       'onChainId',
@@ -216,37 +211,58 @@ export async function donorRoutes(app: FastifyInstance): Promise<void> {
       'updatedAt',
     ];
 
-    const rows = streams.map((stream) => {
-      const ngoName = stream.ngo.displayName || stream.ngo.name || '';
-      return [
-        stream.id,
-        stream.onChainId.toString(),
-        stream.ngoId,
-        ngoName,
-        stream.ngo.ownerAddress,
-        stream.tokenAddress,
-        stream.rate,
-        stream.lastRate ?? '',
-        stream.balance,
-        stream.withdrawn,
-        stream.status,
-        stream.createdTxHash ?? '',
-        stream.createdAt.toISOString(),
-        stream.updatedAt.toISOString(),
-      ];
-    });
-
-    const csvContent = [
-      headers.map(escapeCsvField).join(','),
-      ...rows.map((row) => row.map(escapeCsvField).join(',')),
-    ].join('\r\n');
-
     reply.header('content-type', 'text/csv; charset=utf-8');
     reply.header(
       'content-disposition',
       `attachment; filename="donor-${parsedParams.data.address}-streams.csv"`,
     );
 
-    return reply.send(csvContent ? `${csvContent}\r\n` : '');
+    const csv = Readable.from(
+      (async function* () {
+        yield `${headers.map(escapeCsvField).join(',')}\r\n`;
+        let cursor: string | undefined;
+
+        while (true) {
+          const streams = await prisma.stream.findMany({
+            where: { donorId: donor.id },
+            orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+            take: STREAMS_CSV_BATCH_SIZE,
+            ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+            include: {
+              ngo: { select: { id: true, name: true, displayName: true, ownerAddress: true } },
+            },
+          });
+
+          if (streams.length === 0) break;
+
+          for (const stream of streams) {
+            const ngoName = stream.ngo.displayName || stream.ngo.name || '';
+            const row = [
+              stream.id,
+              stream.onChainId.toString(),
+              stream.ngoId,
+              ngoName,
+              stream.ngo.ownerAddress,
+              stream.tokenAddress,
+              stream.rate,
+              stream.lastRate ?? '',
+              stream.balance,
+              stream.withdrawn,
+              stream.status,
+              stream.createdTxHash ?? '',
+              stream.createdAt.toISOString(),
+              stream.updatedAt.toISOString(),
+            ];
+            yield `${row.map(escapeCsvField).join(',')}\r\n`;
+          }
+
+          const lastStream = streams.at(-1);
+          if (!lastStream || streams.length < STREAMS_CSV_BATCH_SIZE) break;
+          cursor = lastStream.id;
+        }
+      })(),
+    );
+
+    return reply.send(csv);
   });
 }

@@ -392,6 +392,38 @@ describe('GET /v1/donors/:address/streams.csv', () => {
     await app.close();
   });
 
+  it('exports streams in multiple batches', async () => {
+    const app = buildServer();
+    const donor = await prisma.donor.create({ data: { address: fakeAddress('C') } });
+    const ngo = await prisma.ngo.create({
+      data: { ownerAddress: fakeAddress('N'), name: 'NGO', verified: true },
+    });
+    await prisma.stream.createMany({
+      data: Array.from({ length: 501 }, (_, index) => ({
+        onChainId: BigInt(index + 1),
+        donorId: donor.id,
+        ngoId: ngo.id,
+        tokenAddress: fakeAddress('T'),
+        rate: '1',
+        balance: '0',
+        withdrawn: '0',
+        status: 'ACTIVE' as const,
+      })),
+    });
+
+    const findMany = vi.spyOn(prisma.stream, 'findMany');
+    const response = await app.inject({
+      method: 'GET',
+      url: `/v1/donors/${donor.address}/streams.csv`,
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.body.trimEnd().split('\r\n')).toHaveLength(502);
+    expect(findMany).toHaveBeenCalledTimes(2);
+
+    await app.close();
+  });
+
   it('returns 404 for an unknown donor address', async () => {
     const app = buildServer();
     const response = await app.inject({

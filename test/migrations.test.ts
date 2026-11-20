@@ -2,52 +2,15 @@ import { readFile, readdir } from 'node:fs/promises';
 import path from 'node:path';
 
 import { Client } from 'pg';
+import { Prisma } from '../src/generated/prisma/client.js';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
-// ---------------------------------------------------------------------------
-// Schema expectations derived from prisma/schema.prisma.
-// Each entry is [tableName, requiredColumns[]].  We assert every listed
-// column exists in the table produced by the migrations, and that no table
-// in this list is missing entirely.  Extra columns in a table are allowed
-// (future migrations may add columns before the schema is updated), but
-// missing columns or missing tables indicate drift that would break the app.
-// ---------------------------------------------------------------------------
-const EXPECTED_TABLES: [string, string[]][] = [
-  ['donors',               ['id', 'address', 'created_at']],
-  ['ngos',                 ['id', 'owner_address', 'name', 'display_name', 'verified', 'created_at', 'updated_at']],
-  ['streams',              ['id', 'on_chain_id', 'donor_id', 'ngo_id', 'token_address', 'rate', 'last_rate', 'balance', 'withdrawn', 'status', 'created_tx_hash', 'created_at', 'updated_at']],
-  ['ngo_applications',     ['id', 'owner_address', 'name', 'description', 'website', 'contact_email', 'country', 'status', 'review_note', 'created_at', 'updated_at']],
-  ['ngo_application_challenges', ['challenge', 'owner_address', 'expires_at']],
-  ['ngo_application_contact_challenges', ['token_hash', 'application_id', 'expires_at', 'created_at']],
-  ['notification_logs',    ['id', 'event_id', 'event_type', 'channel', 'success', 'error', 'created_at']],
-  ['notification_endpoints', ['id', 'url', 'secret', 'event_types', 'enabled', 'created_at', 'updated_at']],
-  ['idempotency_records', ['key', 'request_hash', 'status_code', 'response', 'created_at', 'expires_at']],
-  [
-    'webhook_deliveries',
-    [
-      'id',
-      'delivery_key',
-      'event_id',
-      'event_type',
-      'channel',
-      'url',
-      'secret',
-      'payload',
-      'status',
-      'attempts',
-      'max_attempts',
-      'next_attempt_at',
-      'locked_until',
-      'last_error',
-      'completed_at',
-      'created_at',
-      'updated_at',
-    ],
-  ],
-  ['indexer_checkpoints',  ['id', 'last_ledger', 'last_event_id', 'updated_at']],
-  ['indexer_dead_letters', ['id', 'event_id', 'ledger', 'contract_id', 'error', 'topic', 'value', 'tx_hash', 'attempts', 'resolved_at', 'created_at', 'updated_at']],
-  ['stream_events',        ['id', 'type', 'stream_id', 'ledger', 'tx_hash', 'payload', 'created_at']],
-];
+const EXPECTED_TABLES = Prisma.dmmf.datamodel.models.map((model) => ({
+  table: model.dbName ?? model.name,
+  columns: model.fields
+    .filter((field) => field.kind !== 'object')
+    .map((field) => field.dbName ?? field.name),
+}));
 
 /** Tables managed by Prisma Migrate itself — not part of the app schema. */
 const PRISMA_INTERNAL_TABLES = new Set(['_prisma_migrations']);
@@ -55,9 +18,50 @@ const PRISMA_INTERNAL_TABLES = new Set(['_prisma_migrations']);
 const ROOT = process.cwd();
 const MIGRATIONS_DIR = path.join(ROOT, 'prisma', 'migrations');
 
+function findSchemaDrift(
+  expectedTables: readonly { table: string; columns: readonly string[] }[],
+  actualTables: ReadonlySet<string>,
+  actualColumns: ReadonlyMap<string, ReadonlySet<string>>,
+): string[] {
+  const drift: string[] = [];
+
+  for (const { table, columns } of expectedTables) {
+    if (!actualTables.has(table)) {
+      drift.push(`Table "${table}" is missing`);
+      continue;
+    }
+
+    const actual = actualColumns.get(table) ?? new Set();
+    for (const column of columns) {
+      if (!actual.has(column)) {
+        drift.push(`Column "${table}"."${column}" is missing`);
+      }
+    }
+  }
+
+  const expectedTableNames = new Set(expectedTables.map(({ table }) => table));
+  for (const table of actualTables) {
+    if (!expectedTableNames.has(table)) {
+      drift.push(`Table "${table}" exists in the database but is not declared in schema.prisma`);
+    }
+  }
+
+  return drift;
+}
+
 describe('Prisma schema and migrations', () => {
   let client: Client;
   let dbAvailable = false;
+
+  it('detects a deliberately missing schema column', () => {
+    expect(
+      findSchemaDrift(
+        [{ table: 'donors', columns: ['id', 'address'] }],
+        new Set(['donors']),
+        new Map([['donors', new Set(['id'])]]),
+      ),
+    ).toEqual(['Column "donors"."address" is missing']);
+  });
 
   beforeAll(async () => {
     const url = process.env.DATABASE_URL;
@@ -149,32 +153,8 @@ describe('Prisma schema and migrations', () => {
         actualColumns.get(table_name)!.add(column_name);
       }
 
-      // 3c. Assert every expected table exists with all its required columns.
-      const missing: string[] = [];
-
-      for (const [table, columns] of EXPECTED_TABLES) {
-        if (!actualTables.has(table)) {
-          missing.push(`Table "${table}" is missing`);
-          continue;
-        }
-        const actual = actualColumns.get(table) ?? new Set();
-        for (const col of columns) {
-          if (!actual.has(col)) {
-            missing.push(`Column "${table}"."${col}" is missing`);
-          }
-        }
-      }
-
-      // 3d. Assert no unexpected application tables exist (catches tables
-      //     added to migrations but not yet reflected in schema.prisma).
-      const expectedTableNames = new Set(EXPECTED_TABLES.map(([t]) => t));
-      for (const t of actualTables) {
-        if (!expectedTableNames.has(t)) {
-          missing.push(
-            `Table "${t}" exists in the database but is not declared in schema.prisma`,
-          );
-        }
-      }
+      // 3c. Compare the database shape against the Prisma schema metadata.
+      const missing = findSchemaDrift(EXPECTED_TABLES, actualTables, actualColumns);
 
       expect(
         missing,

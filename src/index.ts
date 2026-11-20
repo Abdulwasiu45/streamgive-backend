@@ -6,13 +6,14 @@ import 'dotenv/config';
 import { parsePort } from './config.js';
 import { dispatchEvent } from './indexer/dispatch.js';
 import { startIndexer } from './indexer/worker.js';
+import { logger } from './logger.js';
 import { startWebhookDeliveryWorker } from './notifications/webhookDeliveryWorker.js';
 import { buildServer } from './server.js';
 
 function fail(message: string): never {
   // A single line with the variable and the bad value is easier to act on
   // than a stack trace from inside the listen call.
-  console.error(`❌ Configuration Error: ${message}`);
+  logger.error({ message }, 'Configuration Error');
   process.exit(1);
 }
 

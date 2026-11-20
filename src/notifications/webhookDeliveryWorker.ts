@@ -1,4 +1,5 @@
 import { prisma } from '../db.js';
+import { logger } from '../logger.js';
 import { MAX_WEBHOOK_DELIVERY_ATTEMPTS, processWebhookDelivery } from './service.js';
 
 const POLL_INTERVAL_MS = 1_000;
@@ -39,7 +40,10 @@ export async function processDueWebhookDeliveries(): Promise<void> {
       try {
         await processWebhookDelivery(id);
       } catch (error) {
-        console.error('webhook delivery worker failed to process a delivery', error);
+        logger.error(
+          { err: error, deliveryId: id },
+          'webhook delivery worker failed to process a delivery',
+        );
       }
     }),
   );
@@ -60,7 +64,7 @@ export function startWebhookDeliveryWorker(): () => Promise<void> {
     if (stopped) return;
     inFlight = processDueWebhookDeliveries()
       .catch((error: unknown) => {
-        console.error('webhook delivery polling failed', error);
+        logger.error({ err: error }, 'webhook delivery polling failed');
       })
       .finally(() => {
         inFlight = undefined;

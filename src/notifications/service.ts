@@ -1,6 +1,7 @@
 import { createHmac, randomUUID } from 'node:crypto';
 
 import { prisma } from '../db.js';
+import { logger } from '../logger.js';
 import { recordNotificationDelivery } from '../metrics.js';
 import type { NotificationEvent } from './types.js';
 import { isSafeWebhookUrl } from './urlValidation.js';
@@ -73,7 +74,7 @@ async function sendWebhookAttempt(
       });
       if (delivered) return { success: true };
     } catch (error) {
-      console.error('failed to check persisted endpoint delivery', error);
+      logger.error({ err: error }, 'failed to check persisted endpoint delivery');
       return { success: false, error: 'failed to check persisted endpoint delivery' };
     }
   }
@@ -114,14 +115,15 @@ async function sendWebhookAttempt(
         success = true;
       } else {
         error = `status ${res.status}`;
-        console.error(
-          `webhook notification failed with status ${res.status} for ${webhookLocation(target)}`,
+        logger.error(
+          { status: res.status, url: webhookLocation(target) },
+          'webhook notification failed',
         );
       }
     }
   } catch (err) {
     error = err instanceof Error ? err.name : 'unknown_error';
-    console.error('webhook notification failed');
+    logger.error({ err }, 'webhook notification failed');
   }
 
   recordNotificationDelivery(success ? 'success' : 'failure');
@@ -144,7 +146,7 @@ async function sendWebhookAttempt(
       await prisma.notificationLog.create({ data });
     }
   } catch (err) {
-    console.error('failed to write notification log', err);
+    logger.error({ err }, 'failed to write notification log');
   }
 
   return { success, error };
@@ -324,7 +326,7 @@ async function notifyWebhook(event: NotificationEvent): Promise<WebhookResult> {
   try {
     endpoints = await prisma.notificationEndpoint.findMany({ where: { enabled: true } });
   } catch (error) {
-    console.error('failed to load webhook endpoints', error);
+    logger.error({ err: error }, 'failed to load webhook endpoints');
     return { success: false, recordNoop: false };
   }
 
@@ -360,7 +362,7 @@ async function notifyWebhook(event: NotificationEvent): Promise<WebhookResult> {
  * the rest of the app calls, so swapping this out later touches no call
  * sites. */
 async function notifyEmail(event: NotificationEvent): Promise<void> {
-  console.log('[notify:email:stub]', event);
+  logger.info({ event }, '[notify:email:stub]');
 
   try {
     await prisma.notificationLog.create({
@@ -371,7 +373,7 @@ async function notifyEmail(event: NotificationEvent): Promise<void> {
       },
     });
   } catch (err) {
-    console.error('failed to write email notification log', err);
+    logger.error({ err }, 'failed to write email notification log');
   }
 }
 
@@ -397,7 +399,7 @@ export async function notify(event: NotificationEvent): Promise<void> {
           },
         });
       } catch (err) {
-        console.error('failed to persist delivery record', err);
+        logger.error({ err }, 'failed to persist delivery record');
       }
     }
   }
@@ -410,6 +412,6 @@ export async function notify(event: NotificationEvent): Promise<void> {
  */
 export function dispatchNotification(event: NotificationEvent): void {
   notify(event).catch((err) => {
-    console.error('asynchronous notification dispatch failed', err);
+    logger.error({ err }, 'asynchronous notification dispatch failed');
   });
 }

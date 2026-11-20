@@ -1,6 +1,7 @@
 import { Client } from 'pg';
 
 import { getDatabaseUrl } from '../db.js';
+import { logger } from '../logger.js';
 
 const LOCK_CLASS_ID = 1_398_038_612;
 const LOCK_OBJECT_ID = 1;
@@ -29,7 +30,10 @@ export async function tryAcquireIndexerLock(): Promise<IndexerLock | null> {
     try {
       await client.end();
     } catch (closeError) {
-      console.error('failed to close indexer lock connection after acquisition error', closeError);
+      logger.error(
+        { err: closeError },
+        'failed to close indexer lock connection after acquisition error',
+      );
     }
     throw error;
   }

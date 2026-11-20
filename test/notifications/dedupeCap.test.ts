@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { logger } from '../../src/logger.js';
+
 // Prisma is mocked so this runs in the unit project: no database needed to
 // fill the de-duplication set past its cap.
 const findFirst = vi.fn();
@@ -101,8 +103,8 @@ describe('notify de-duplication cap', () => {
     deliveryUpdateMany.mockClear();
     deliveryUpdate.mockClear();
     process.env.NOTIFY_WEBHOOK_URL = 'http://example.com/webhook';
-    vi.spyOn(console, 'log').mockImplementation(() => {});
-    vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.spyOn(logger, 'info').mockImplementation(() => {});
+    vi.spyOn(logger, 'error').mockImplementation(() => {});
     fetchSpy = vi
       .spyOn(globalThis, 'fetch')
       .mockImplementation(async () => new Response(null, { status: 200 }));
