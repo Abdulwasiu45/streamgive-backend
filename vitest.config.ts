@@ -14,6 +14,7 @@ const unitTests = [
   'test/routes/serializeStream.test.ts',
   'test/routes/escapeCsvField.test.ts',
   'test/scripts/replayDeadLetters.test.ts',
+  'test/scripts/rebuildStreams.test.ts',
 ];
 
 export default defineConfig({

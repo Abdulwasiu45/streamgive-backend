@@ -478,6 +478,20 @@ describe('GET /v1/ngos/:id', () => {
     await app.close();
   });
 
+  it('includes verifiedAt in the detail response', async () => {
+    const verifiedAt = new Date('2026-11-01T12:00:00.000Z');
+    const ngo = await prisma.ngo.create({
+      data: { ownerAddress: fakeAddress('W'), name: 'Verified Since', verified: true, verifiedAt },
+    });
+    const app = buildServer();
+
+    const response = await app.inject({ method: 'GET', url: `/v1/ngos/${ngo.id}` });
+    expect(response.statusCode).toBe(200);
+    expect(response.json().verifiedAt).toBe(verifiedAt.toISOString());
+
+    await app.close();
+  });
+
   it('400s for a non-uuid id instead of leaking a Prisma error', async () => {
     const app = buildServer();
 
