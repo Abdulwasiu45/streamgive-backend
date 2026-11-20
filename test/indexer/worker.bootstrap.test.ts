@@ -21,6 +21,12 @@ vi.mock('../../src/indexer/contracts.js', () => ({
 vi.mock('../../src/indexer/deadLetter.js', () => ({
   recordDeadLetter: vi.fn().mockResolvedValue(undefined),
 }));
+vi.mock('../../src/indexer/lock.js', () => ({
+  tryAcquireIndexerLock: vi.fn().mockResolvedValue({
+    isHeld: () => true,
+    release: vi.fn().mockResolvedValue(undefined),
+  }),
+}));
 
 const checkpoint = await import('../../src/indexer/checkpoint.js');
 const rpc = await import('../../src/stellar/rpc.js');
@@ -55,6 +61,12 @@ async function freshWorker() {
   }));
   vi.doMock('../../src/indexer/deadLetter.js', () => ({
     recordDeadLetter: deadLetter.recordDeadLetter,
+  }));
+  vi.doMock('../../src/indexer/lock.js', () => ({
+    tryAcquireIndexerLock: vi.fn().mockResolvedValue({
+      isHeld: () => true,
+      release: vi.fn().mockResolvedValue(undefined),
+    }),
   }));
   return import('../../src/indexer/worker.js');
 }

@@ -241,7 +241,7 @@ page is available, otherwise `null`.
 
 ### `GET /v1/ngos/all`
 
-**Auth:** Admin signature  
+**Auth:** Admin signature
 **Query params:**
 
 | Name       | Type              | Default | Description                    |
@@ -859,6 +859,32 @@ Returns paginated records of failed contract events recorded in `indexer_dead_le
   "nextCursor": null
 }
 ```
+
+### `GET /v1/admin/dead-letters/{id}`
+
+**Auth:** Admin signature
+
+**Path params:** `id` (UUID)
+
+Returns the dead-letter record, including the complete event payload, error,
+attempt count, and resolution audit fields. Returns
+`400 {"error":"invalid_request"}` for a non-UUID and
+`404 {"error":"dead_letter_not_found"}` when no record has that id.
+
+### `POST /v1/admin/dead-letters/{id}/resolve`
+
+**Auth:** Admin signature
+
+**Path params:** `id` (UUID)
+
+**Body:** Optional JSON object with `note` (optional string, up to 2,000
+characters).
+
+Marks an unresolved record as resolved and records the authenticated admin
+address, resolution time, and optional note. Returns `200` with the updated
+record in `deadLetter`. Returns `404 {"error":"dead_letter_not_found"}` for an
+unknown id, `409 {"error":"dead_letter_already_resolved"}` if it is already
+resolved, and `400 {"error":"invalid_request"}` for an invalid id or body.
 
 ## Interactive API documentation
 

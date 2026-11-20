@@ -172,37 +172,53 @@ shapes, including `ngo_registered`, are documented in
 ```js
 import { createHmac, timingSafeEqual } from 'node:crypto';
 
-function isFromStreamGive(rawBody, signatureHeader, secret) {
-  if (!signatureHeader) return false;
+function isFromStreamGive(rawBody, signatureHeader, timestamp, deliveryId, secret) {
+  if (!signatureHeader || !timestamp || !deliveryId) return false;
+  const match = /^v1=([0-9a-f]{64})$/.exec(signatureHeader);
+  const seconds = Number(timestamp);
+  if (
+    !match ||
+    !Number.isSafeInteger(seconds) ||
+    Math.abs(Date.now() / 1000 - seconds) > 300
+  ) {
+    return false;
+  }
 
-  const expected = createHmac('sha256', secret).update(rawBody).digest();
-  const received = Buffer.from(signatureHeader, 'hex');
+  const expected = createHmac('sha256', secret)
+    .update(`${timestamp}.${deliveryId}.`)
+    .update(rawBody)
+    .digest();
+  const received = Buffer.from(match[1], 'hex');
 
   // timingSafeEqual throws on a length mismatch, so check that first.
   return received.length === expected.length && timingSafeEqual(received, expected);
 }
 ```
 
-Reject any request whose signature does not match, and any unsigned request
-once you have configured a secret. When `NOTIFY_WEBHOOK_SECRET` is unset the
-header is omitted entirely, so receivers can be rolled out before the secret
-is configured — but an endpoint that accepts unsigned requests is exactly the
-hole the header exists to close, so treat that as a migration step rather
-than a resting state.
+The sender also supplies `x-streamgive-delivery-id` (a UUID) and
+`x-streamgive-timestamp` (Unix epoch seconds) on each attempt. The signature
+header is `v1=<lower-case-hex>` and covers
+`timestamp.deliveryId.rawRequestBody`. Reject timestamps more than five
+minutes from your clock and cache delivery IDs for at least five minutes to
+reject duplicate requests. When no secret is configured, the signature header
+is omitted; require it once a secret is configured. See
+[docs/WEBHOOKS.md](./docs/WEBHOOKS.md) for full receiver guidance.
 
 ### Verifying the signature
 
 The webhook URL is not a secret — anyone who learns it can POST whatever they
 like to your receiver. Set `NOTIFY_WEBHOOK_SECRET` to a shared secret and
-every request will additionally carry:
+each request will carry an `x-streamgive-delivery-id` UUID, an
+`x-streamgive-timestamp` Unix epoch seconds value, and:
 
 ```
-x-streamgive-signature: <hex>
+x-streamgive-signature: v1=<hex>
 ```
 
-where `<hex>` is the lower-case hex HMAC-SHA256 of the **raw request body**,
-keyed with `NOTIFY_WEBHOOK_SECRET`. There is no prefix, timestamp or version
-tag in the value — it is the bare digest.
+where `<hex>` is the lower-case hex HMAC-SHA256 of
+`timestamp.deliveryId.rawRequestBody`, keyed with `NOTIFY_WEBHOOK_SECRET`.
+Reject timestamps more than five minutes from your clock and cache delivery
+IDs for at least five minutes to reject duplicate requests.
 
 For a receiver-side guide — verification examples, answering within the
 timeout, retries, ordering and idempotency — see

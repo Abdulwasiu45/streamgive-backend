@@ -6,10 +6,12 @@ Every body is discriminated by its `type` field. The matching TypeScript definit
 [`src/notifications/types.ts`](../src/notifications/types.ts).
 
 All events may include an optional `eventId` — the on-chain event id used to
-deduplicate deliveries and to retry failed sends. Deliveries are signed with
-the `x-streamgive-signature` header, keyed with the destination's secret, as
-described in the "Notification events" section of the
-[README](../README.md#notification-events).
+deduplicate deliveries and to retry failed sends. Each webhook request also
+includes an `x-streamgive-delivery-id` and an epoch-seconds
+`x-streamgive-timestamp`. When a destination secret is configured, the
+`x-streamgive-signature` header contains a versioned HMAC over the timestamp,
+delivery id, and exact request body. See [signature verification](#signature-verification)
+below.
 
 For receiver-side guidance — signature verification, answering within the
 timeout, retries, ordering and idempotency — see
@@ -157,3 +159,21 @@ enabled, table subscriptions take precedence.
 
 Endpoint configuration is operational data. Restrict database access to
 trusted operators and use HTTPS URLs for destinations.
+
+## Signature verification
+
+When a destination secret is configured, `x-streamgive-signature` has the
+form `v1=<lower-case-hex>`. The digest is HMAC-SHA256 of the UTF-8 bytes of
+`<timestamp>.<delivery-id>.<raw-request-body>`, keyed with the destination's
+secret. Verify the raw body bytes before parsing JSON. The timestamp is Unix
+epoch seconds; reject requests more than five minutes from the receiver's
+current time. Cache accepted delivery IDs for at least that same five-minute
+window and reject duplicates to prevent replay within the timestamp window.
+
+The sender creates a new UUID delivery ID and timestamp for each HTTP attempt.
+When no secret is configured, the ID and timestamp are still sent but the
+signature header is omitted; receivers should require a signature after
+configuring a secret.
+
+For complete Node.js and Python receiver examples, including timestamp and
+replay checks, see [WEBHOOKS.md](./WEBHOOKS.md).

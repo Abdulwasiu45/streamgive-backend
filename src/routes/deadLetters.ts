@@ -19,6 +19,14 @@ const querySchema = z.object({
     .transform((val) => (val === undefined ? undefined : val === 'true')),
 });
 
+const deadLetterParamsSchema = z.object({
+  id: z.string().uuid(),
+});
+
+const resolutionBodySchema = z.object({
+  note: z.string().trim().max(2000).optional(),
+});
+
 export async function deadLetterRoutes(app: FastifyInstance): Promise<void> {
   /**
    * Lists failed Soroban contract events recorded in the dead-letter queue.
@@ -117,6 +125,122 @@ export async function deadLetterRoutes(app: FastifyInstance): Promise<void> {
         total,
         hasMore,
         nextCursor,
+      };
+    },
+  );
+
+  app.get(
+    '/admin/dead-letters/:id',
+    {
+      preHandler: requireAdminSignature,
+      schema: {
+        tags: ['Admin'],
+        summary: 'Get a dead-lettered event',
+        description: 'Returns a dead-letter record by id, including its raw event payload.',
+        params: {
+          type: 'object',
+          properties: { id: { type: 'string', format: 'uuid' } },
+          required: ['id'],
+        },
+        response: {
+          200: { type: 'object', additionalProperties: true },
+          400: { type: 'object', additionalProperties: true },
+          401: { type: 'object', additionalProperties: true },
+          404: { type: 'object', additionalProperties: true },
+          503: { type: 'object', additionalProperties: true },
+        },
+      },
+    },
+    async (request, reply) => {
+      const parsedParams = deadLetterParamsSchema.safeParse(request.params);
+      if (!parsedParams.success) {
+        return reply
+          .code(400)
+          .send({ error: 'invalid_request', details: parsedParams.error.flatten() });
+      }
+
+      const deadLetter = await prisma.indexerDeadLetter.findUnique({
+        where: { id: parsedParams.data.id },
+      });
+      if (!deadLetter) {
+        return reply.code(404).send({ error: 'dead_letter_not_found' });
+      }
+
+      return deadLetter;
+    },
+  );
+
+  app.post(
+    '/admin/dead-letters/:id/resolve',
+    {
+      preHandler: requireAdminSignature,
+      schema: {
+        tags: ['Admin'],
+        summary: 'Resolve a dead-lettered event',
+        description: 'Marks a dead letter as resolved by the authenticated admin.',
+        params: {
+          type: 'object',
+          properties: { id: { type: 'string', format: 'uuid' } },
+          required: ['id'],
+        },
+        body: {
+          type: 'object',
+          properties: { note: { type: 'string', maxLength: 2000 } },
+          additionalProperties: false,
+        },
+        response: {
+          200: { type: 'object', additionalProperties: true },
+          400: { type: 'object', additionalProperties: true },
+          401: { type: 'object', additionalProperties: true },
+          404: { type: 'object', additionalProperties: true },
+          409: { type: 'object', additionalProperties: true },
+          503: { type: 'object', additionalProperties: true },
+        },
+      },
+    },
+    async (request, reply) => {
+      const parsedParams = deadLetterParamsSchema.safeParse(request.params);
+      if (!parsedParams.success) {
+        return reply
+          .code(400)
+          .send({ error: 'invalid_request', details: parsedParams.error.flatten() });
+      }
+
+      const parsedBody = resolutionBodySchema.safeParse(request.body ?? {});
+      if (!parsedBody.success) {
+        return reply
+          .code(400)
+          .send({ error: 'invalid_request', details: parsedBody.error.flatten() });
+      }
+
+      const id = parsedParams.data.id;
+      const existing = await prisma.indexerDeadLetter.findUnique({ where: { id } });
+      if (!existing) {
+        return reply.code(404).send({ error: 'dead_letter_not_found' });
+      }
+
+      const resolvedBy = request.headers['x-admin-address'];
+      if (typeof resolvedBy !== 'string') {
+        return reply.code(401).send({ error: 'unauthorized' });
+      }
+
+      const result = await prisma.indexerDeadLetter.updateMany({
+        where: { id, resolvedAt: null },
+        data: {
+          resolvedAt: new Date(),
+          resolvedBy,
+          resolutionNote: parsedBody.data.note || null,
+        },
+      });
+      if (result.count === 0) {
+        return reply.code(409).send({
+          error: 'dead_letter_already_resolved',
+          message: 'Dead letter has already been resolved',
+        });
+      }
+
+      return {
+        deadLetter: await prisma.indexerDeadLetter.findUniqueOrThrow({ where: { id } }),
       };
     },
   );
