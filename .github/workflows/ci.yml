@@ -51,8 +51,8 @@ jobs:
         # test database directly from schema.prisma.
         run: npx prisma db push
 
-      - name: Test
-        run: npm test
+      - name: Test and enforce coverage
+        run: npx vitest run --coverage
 
   docker-smoke:
     runs-on: ubuntu-latest
