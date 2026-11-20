@@ -7,6 +7,13 @@ import { prisma } from '../db.js';
 import { requireAdminSignature, sep53Hash } from '../middleware/adminAuth.js';
 import { notify } from '../notifications/service.js';
 import { sendContactVerification, verifyContactToken } from '../notifications/contactVerification.js';
+import {
+  abandonIdempotentRequest,
+  beginIdempotentRequest,
+  completeIdempotentRequest,
+  hashRequestBody,
+  IDEMPOTENCY_HEADER,
+} from '../idempotency/index.js';
 
 const APPLICATION_CHALLENGE_TTL_MS = 5 * 60 * 1000;
 
@@ -186,6 +193,10 @@ export async function ngoApplicationRoutes(app: FastifyInstance): Promise<void> 
    * Submits a public NGO verification application.
    * @route POST /v1/ngo-applications
    * @body applicationSchema plus a server-issued `challenge` and SEP-53 `signature`
+   * @header Idempotency-Key optional; a repeat within 24 hours with the same body replays the
+   * first response (marked `idempotent-replayed: true`), with a different body returns 422
+   * `idempotency_key_reused`, and while the first is still running returns 409
+   * `idempotency_request_in_progress`.
    * @auth Public
    * @returns 201 created application; 400 invalid request or signature; 409 `{ error: "already_approved" | "application_already_pending" }`.
    */
@@ -202,59 +213,102 @@ export async function ngoApplicationRoutes(app: FastifyInstance): Promise<void> 
       },
     },
     async (request, reply) => {
-      const parsed = applicationSubmissionSchema.safeParse(request.body);
-      if (!parsed.success) {
-        return reply.code(400).send({ error: 'invalid_request', details: parsed.error.flatten() });
-      }
-
-      const { challenge, signature, ...applicationData } = parsed.data;
-      const challengeRecord = await prisma.ngoApplicationChallenge.findUnique({
-        where: { challenge },
-      });
-      if (
-        !challengeRecord ||
-        challengeRecord.ownerAddress !== applicationData.ownerAddress ||
-        challengeRecord.expiresAt.getTime() <= Date.now()
-      ) {
-        return reply.code(400).send({ error: 'invalid_or_expired_challenge' });
-      }
-
-      const message = applicationChallengeMessage(
-        challengeRecord.ownerAddress,
-        challenge,
-        challengeRecord.expiresAt,
-      );
-      if (!verifyApplicationSignature(applicationData.ownerAddress, message, signature)) {
-        return reply.code(401).send({ error: 'invalid_signature' });
-      }
-
-      const consumed = await prisma.ngoApplicationChallenge.deleteMany({
-        where: {
-          challenge,
-          ownerAddress: applicationData.ownerAddress,
-          expiresAt: { gt: new Date() },
-        },
-      });
-      if (consumed.count !== 1) {
-        return reply.code(400).send({ error: 'invalid_or_expired_challenge' });
-      }
-
-      const result = await createApplicationUnlessBlocked(applicationData);
-      if (!result.ok) {
-        if (result.status === 'APPROVED') {
-          return reply.code(409).send({ error: 'already_approved' });
+      const submit = async (): Promise<readonly [number, unknown]> => {
+        const parsed = applicationSubmissionSchema.safeParse(request.body);
+        if (!parsed.success) {
+          return [400, { error: 'invalid_request', details: parsed.error.flatten() }] as const;
         }
-        return reply.code(409).send({ error: 'application_already_pending' });
+
+        const { challenge, signature, ...applicationData } = parsed.data;
+        const challengeRecord = await prisma.ngoApplicationChallenge.findUnique({
+          where: { challenge },
+        });
+        if (
+          !challengeRecord ||
+          challengeRecord.ownerAddress !== applicationData.ownerAddress ||
+          challengeRecord.expiresAt.getTime() <= Date.now()
+        ) {
+          return [400, { error: 'invalid_or_expired_challenge' }] as const;
+        }
+
+        const message = applicationChallengeMessage(
+          challengeRecord.ownerAddress,
+          challenge,
+          challengeRecord.expiresAt,
+        );
+        if (!verifyApplicationSignature(applicationData.ownerAddress, message, signature)) {
+          return [401, { error: 'invalid_signature' }] as const;
+        }
+
+        const consumed = await prisma.ngoApplicationChallenge.deleteMany({
+          where: {
+            challenge,
+            ownerAddress: applicationData.ownerAddress,
+            expiresAt: { gt: new Date() },
+          },
+        });
+        if (consumed.count !== 1) {
+          return [400, { error: 'invalid_or_expired_challenge' }] as const;
+        }
+
+        const result = await createApplicationUnlessBlocked(applicationData);
+        if (!result.ok) {
+          if (result.status === 'APPROVED') {
+            return [409, { error: 'already_approved' }] as const;
+          }
+          return [409, { error: 'application_already_pending' }] as const;
+        }
+
+        await notify({
+          type: 'application_submitted',
+          applicationId: result.application.id,
+          ownerAddress: result.application.ownerAddress,
+          name: result.application.name,
+        });
+        await sendContactVerification(result.application);
+        return [201, result.application] as const;
+      };
+
+      // Optional Idempotency-Key: a retried submission gets the first response
+      // back instead of creating (or being refused as) a duplicate.
+      const rawKey = request.headers[IDEMPOTENCY_HEADER];
+      if (rawKey === undefined) {
+        const [status, payload] = await submit();
+        return reply.code(status).send(payload);
+      }
+      const clientKey = Array.isArray(rawKey) ? '' : rawKey;
+      const rawBody = (request as typeof request & { rawBody?: Buffer }).rawBody;
+      const started = await beginIdempotentRequest(
+        'ngo-applications',
+        clientKey,
+        hashRequestBody(rawBody ?? JSON.stringify(request.body ?? null)),
+      );
+      if (started.kind === 'invalid') {
+        return reply.code(400).send({ error: 'invalid_idempotency_key' });
+      }
+      if (started.kind === 'conflict') {
+        return reply
+          .code(started.error === 'idempotency_key_reused' ? 422 : 409)
+          .send({ error: started.error });
+      }
+      if (started.kind === 'replay') {
+        return reply
+          .code(started.statusCode)
+          .header('idempotent-replayed', 'true')
+          .send(started.response);
       }
 
-      await notify({
-        type: 'application_submitted',
-        applicationId: result.application.id,
-        ownerAddress: result.application.ownerAddress,
-        name: result.application.name,
-      });
-      await sendContactVerification(result.application);
-      return reply.code(201).send(result.application);
+      let result: readonly [number, unknown];
+      try {
+        result = await submit();
+      } catch (err) {
+        await abandonIdempotentRequest(started.key);
+        throw err;
+      }
+      const [status, payload] = result;
+      // Round-trip through JSON so the stored copy matches what was sent.
+      await completeIdempotentRequest(started.key, status, JSON.parse(JSON.stringify(payload)));
+      return reply.code(status).send(payload);
     },
   );
 

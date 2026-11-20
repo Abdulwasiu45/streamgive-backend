@@ -3,6 +3,7 @@ import { z } from 'zod';
 
 import { prisma } from '../db.js';
 import { requireAdminSignature } from '../middleware/adminAuth.js';
+import { sendWebhookPing } from '../notifications/service.js';
 import { NOTIFICATION_EVENT_TYPES } from '../notifications/types.js';
 import { isSafeWebhookUrl } from '../notifications/urlValidation.js';
 
@@ -164,6 +165,47 @@ export async function notificationEndpointRoutes(app: FastifyInstance): Promise<
         data: parsedBody.data,
       });
       return publicEndpoint(endpoint);
+    },
+  );
+
+  /**
+   * Sends a signed `ping` event to one endpoint and reports how it answered.
+   * Not retried and not recorded as a delivery.
+   * @route POST /v1/admin/notification-endpoints/:id/test
+   * @returns 200 `{ ok, statusCode, latencyMs, deliveryId, error? }`; 404 unknown endpoint.
+   */
+  app.post(
+    '/admin/notification-endpoints/:id/test',
+    {
+      preHandler: requireAdminSignature,
+      schema: {
+        tags: ['Admin'],
+        summary: 'Send a test ping to a notification endpoint',
+        params: {
+          type: 'object',
+          properties: { id: { type: 'string', format: 'uuid' } },
+          required: ['id'],
+        },
+        response: {
+          200: { type: 'object', additionalProperties: true },
+          400: { type: 'object', additionalProperties: true },
+          401: { type: 'object', additionalProperties: true },
+          404: { type: 'object', additionalProperties: true },
+          503: { type: 'object', additionalProperties: true },
+        },
+      },
+    },
+    async (request, reply) => {
+      const parsedParams = idParamsSchema.safeParse(request.params);
+      if (!parsedParams.success) {
+        return reply.code(400).send({ error: 'invalid_request' });
+      }
+      const endpoint = await prisma.notificationEndpoint.findUnique({
+        where: { id: parsedParams.data.id },
+        select: { id: true, url: true, secret: true },
+      });
+      if (!endpoint) return reply.code(404).send({ error: 'not_found' });
+      return sendWebhookPing(endpoint);
     },
   );
 

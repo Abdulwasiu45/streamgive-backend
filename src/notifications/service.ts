@@ -150,6 +150,74 @@ async function sendWebhookAttempt(
   return { success, error };
 }
 
+export type WebhookPingResult = {
+  ok: boolean;
+  /** HTTP status from the receiver; null when no response arrived. */
+  statusCode: number | null;
+  latencyMs: number;
+  deliveryId: string;
+  error?: string;
+};
+
+/**
+ * Sends one signed `ping` event to a webhook receiver so an operator can check
+ * it after adding or editing it. Uses the same headers, signature and
+ * delivery timeout as real deliveries, but never retries and never writes a
+ * notification log, delivery row or metric: a ping is not a delivery.
+ */
+export async function sendWebhookPing(target: {
+  id: string;
+  url: string;
+  secret: string;
+}): Promise<WebhookPingResult> {
+  const deliveryId = `ping-${randomUUID()}`;
+  const body = JSON.stringify({
+    type: 'ping',
+    endpointId: target.id,
+    sentAt: new Date().toISOString(),
+  });
+  const timestamp = Math.floor(Date.now() / 1000).toString();
+  const signature = createHmac('sha256', target.secret)
+    .update(`${timestamp}.${deliveryId}.${body}`)
+    .digest('hex');
+  const headers: Record<string, string> = {
+    'content-type': 'application/json',
+    [DELIVERY_ID_HEADER]: deliveryId,
+    [TIMESTAMP_HEADER]: timestamp,
+    [SIGNATURE_HEADER]: `v1=${signature}`,
+  };
+
+  if (!(await isSafeWebhookUrl(target.url))) {
+    return { ok: false, statusCode: null, latencyMs: 0, deliveryId, error: 'unsafe_destination' };
+  }
+
+  const started = performance.now();
+  try {
+    const res = await fetch(target.url, {
+      method: 'POST',
+      headers,
+      body,
+      signal: AbortSignal.timeout(getWebhookTimeoutMs()),
+      redirect: 'error',
+    });
+    return {
+      ok: res.ok,
+      statusCode: res.status,
+      latencyMs: Math.round(performance.now() - started),
+      deliveryId,
+    };
+  } catch (err) {
+    const name = err instanceof Error ? err.name : 'unknown_error';
+    return {
+      ok: false,
+      statusCode: null,
+      latencyMs: Math.round(performance.now() - started),
+      deliveryId,
+      error: name === 'TimeoutError' ? 'timeout' : name,
+    };
+  }
+}
+
 function retryDelayMs(attempt: number): number {
   return Math.min(RETRY_BASE_MS * 2 ** (attempt - 1), RETRY_MAX_MS);
 }

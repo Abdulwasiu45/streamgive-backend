@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { prisma } from '../../src/db.js';
+import { MAX_TIMESERIES_DAYS } from '../../src/routes/impact.js';
 import { buildServer } from '../../src/server.js';
 import { fakeAddress, resetDb } from '../helpers/db.js';
 
@@ -410,6 +411,133 @@ describe('GET /v1/impact/:ngoId', () => {
     expect(body.activeStreams).toBe(1);
     expect(body.cancelledStreams).toBe(1);
 
+    await app.close();
+  });
+});
+
+describe('GET /v1/impact/:ngoId/timeseries', () => {
+  beforeEach(async () => {
+    await resetDb();
+  });
+
+  afterEach(async () => {
+    await resetDb();
+  });
+
+  it('returns a zero-filled day for every date when the NGO has no activity', async () => {
+    const app = buildServer();
+    const ngo = await prisma.ngo.create({
+      data: { ownerAddress: fakeAddress('E'), name: 'Quiet NGO', verified: true },
+    });
+
+    const res = await app.inject({
+      method: 'GET',
+      url: `/v1/impact/${ngo.id}/timeseries?from=2026-01-01&to=2026-01-05`,
+    });
+    expect(res.statusCode).toBe(200);
+    const body = res.json();
+    expect(body).toMatchObject({ ngoId: ngo.id, from: '2026-01-01', to: '2026-01-05' });
+    expect(body.days).toHaveLength(5);
+    expect(body.days[0]).toEqual({
+      date: '2026-01-01',
+      newStreams: 0,
+      withdrawals: 0,
+      withdrawnAmount: '0',
+    });
+    expect(
+      body.days.every(
+        (d: { newStreams: number; withdrawals: number }) =>
+          d.newStreams === 0 && d.withdrawals === 0,
+      ),
+    ).toBe(true);
+    await app.close();
+  });
+
+  it('counts new streams and sums withdrawals per day for a busy NGO only', async () => {
+    const app = buildServer();
+    const ngo = await prisma.ngo.create({
+      data: { ownerAddress: fakeAddress('F'), name: 'Busy NGO', verified: true },
+    });
+    const other = await prisma.ngo.create({
+      data: { ownerAddress: fakeAddress('G'), name: 'Other NGO', verified: true },
+    });
+    const donor = await prisma.donor.create({ data: { address: fakeAddress('H') } });
+
+    const stream = (onChainId: bigint, ngoId: string, createdAt: string) =>
+      prisma.stream.create({
+        data: {
+          onChainId,
+          donorId: donor.id,
+          ngoId,
+          tokenAddress: fakeAddress('T'),
+          rate: '1',
+          balance: '100',
+          withdrawn: '0',
+          createdAt: new Date(createdAt),
+        },
+      });
+    await stream(10n, ngo.id, '2026-02-01T09:00:00Z');
+    await stream(11n, ngo.id, '2026-02-01T18:00:00Z');
+    await stream(12n, ngo.id, '2026-02-03T12:00:00Z');
+    await stream(13n, other.id, '2026-02-01T10:00:00Z');
+
+    const withdraw = (streamId: bigint, accrued: string, createdAt: string) =>
+      prisma.streamEvent.create({
+        data: {
+          type: 'withdraw',
+          streamId,
+          ledger: 1,
+          txHash: `tx-${streamId}-${createdAt}`,
+          payload: { accrued },
+          createdAt: new Date(createdAt),
+        },
+      });
+    await withdraw(10n, '40', '2026-02-02T08:00:00Z');
+    await withdraw(11n, '60', '2026-02-02T20:00:00Z');
+    await withdraw(12n, '5', '2026-02-03T13:00:00Z');
+    await withdraw(13n, '999', '2026-02-02T08:00:00Z'); // other NGO
+
+    const res = await app.inject({
+      method: 'GET',
+      url: `/v1/impact/${ngo.id}/timeseries?from=2026-02-01&to=2026-02-04`,
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().days).toEqual([
+      { date: '2026-02-01', newStreams: 2, withdrawals: 0, withdrawnAmount: '0' },
+      { date: '2026-02-02', newStreams: 0, withdrawals: 2, withdrawnAmount: '100' },
+      { date: '2026-02-03', newStreams: 1, withdrawals: 1, withdrawnAmount: '5' },
+      { date: '2026-02-04', newStreams: 0, withdrawals: 0, withdrawnAmount: '0' },
+    ]);
+    await app.close();
+  });
+
+  it('caps the range and rejects inverted or malformed ranges', async () => {
+    const app = buildServer();
+    const ngo = await prisma.ngo.create({
+      data: { ownerAddress: fakeAddress('J'), name: 'Range NGO', verified: true },
+    });
+    const get = (q: string) =>
+      app.inject({ method: 'GET', url: `/v1/impact/${ngo.id}/timeseries?${q}` });
+
+    const tooLong = await get('from=2026-01-01&to=2026-12-31');
+    expect(tooLong.statusCode).toBe(400);
+    expect(tooLong.json()).toEqual({ error: 'range_too_large', maxDays: MAX_TIMESERIES_DAYS });
+    expect((await get('from=2026-03-02&to=2026-03-01')).json().error).toBe('invalid_range');
+    expect((await get('from=yesterday')).statusCode).toBe(400);
+
+    const defaultRange = await get('');
+    expect(defaultRange.statusCode).toBe(200);
+    expect(defaultRange.json().days).toHaveLength(30);
+    await app.close();
+  });
+
+  it('returns 404 for an unknown NGO', async () => {
+    const app = buildServer();
+    const res = await app.inject({
+      method: 'GET',
+      url: '/v1/impact/00000000-0000-4000-8000-000000000000/timeseries',
+    });
+    expect(res.statusCode).toBe(404);
     await app.close();
   });
 });

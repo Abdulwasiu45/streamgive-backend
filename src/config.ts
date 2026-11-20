@@ -10,6 +10,7 @@
 export const DEFAULT_PORT = 3000;
 export const DEFAULT_RATE_LIMIT_MAX = 100;
 export const DEFAULT_RATE_LIMIT_WINDOW = '1 minute';
+export const DEFAULT_SLOW_REQUEST_THRESHOLD_MS = 1000;
 
 /** Undefined, empty and whitespace-only values are treated as unset. */
 function configured(value: string | undefined): string | undefined {
@@ -89,4 +90,23 @@ export function parseRateLimitWindow(value: string | undefined): string {
   }
 
   return raw;
+}
+
+/**
+ * Validates SLOW_REQUEST_THRESHOLD_MS: requests slower than this are logged
+ * as warnings. `0` turns the warning off.
+ */
+export function parseSlowRequestThresholdMs(value: string | undefined): number {
+  const raw = configured(value);
+  if (raw === undefined) {
+    return DEFAULT_SLOW_REQUEST_THRESHOLD_MS;
+  }
+
+  if (!/^\d+$/.test(raw) || !Number.isSafeInteger(Number(raw))) {
+    throw new Error(
+      `SLOW_REQUEST_THRESHOLD_MS must be a non-negative integer (milliseconds), received "${raw}"`,
+    );
+  }
+
+  return Number(raw);
 }

@@ -9,7 +9,7 @@ import Fastify from 'fastify';
 import type { FastifyError, FastifyReply } from 'fastify';
 import packageJson from '../package.json' with { type: 'json' };
 
-import { parseRateLimitMax, parseRateLimitWindow } from './config.js';
+import { parseRateLimitMax, parseRateLimitWindow, parseSlowRequestThresholdMs } from './config.js';
 import { prisma } from './db.js';
 import { requireAdminSignature } from './middleware/adminAuth.js';
 import { recordHttpRequest, renderMetrics } from './metrics.js';
@@ -125,6 +125,7 @@ export function buildServer(options?: BuildServerOptions) {
   // error on the first throttled request.
   const rateLimitMax = parseRateLimitMax(process.env.RATE_LIMIT_MAX);
   const rateLimitWindow = parseRateLimitWindow(process.env.RATE_LIMIT_WINDOW);
+  const slowRequestThresholdMs = parseSlowRequestThresholdMs(process.env.SLOW_REQUEST_THRESHOLD_MS);
   const trustProxySetting =
     options?.trustProxy !== undefined
       ? options.trustProxy
@@ -302,12 +303,25 @@ export function buildServer(options?: BuildServerOptions) {
     const startedAt = requestStartedAt.get(request);
     if (startedAt === undefined) return;
     const durationSeconds = Number(process.hrtime.bigint() - startedAt) / 1_000_000_000;
-    recordHttpRequest(
-      request.method,
-      request.routeOptions.url ?? 'unmatched',
-      reply.statusCode,
-      durationSeconds,
-    );
+    const route = request.routeOptions.url ?? 'unmatched';
+    recordHttpRequest(request.method, route, reply.statusCode, durationSeconds);
+
+    const durationMs = Math.round(durationSeconds * 1000);
+    if (slowRequestThresholdMs > 0 && durationMs > slowRequestThresholdMs) {
+      // Route template (not the raw URL) so ids and query strings never leak
+      // into logs and slow requests group by endpoint.
+      app.log.warn(
+        {
+          reqId: request.id,
+          method: request.method,
+          route,
+          statusCode: reply.statusCode,
+          durationMs,
+          thresholdMs: slowRequestThresholdMs,
+        },
+        'slow request',
+      );
+    }
   });
 
   /**

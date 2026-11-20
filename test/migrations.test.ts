@@ -21,6 +21,7 @@ const EXPECTED_TABLES: [string, string[]][] = [
   ['ngo_application_contact_challenges', ['token_hash', 'application_id', 'expires_at', 'created_at']],
   ['notification_logs',    ['id', 'event_id', 'event_type', 'channel', 'success', 'error', 'created_at']],
   ['notification_endpoints', ['id', 'url', 'secret', 'event_types', 'enabled', 'created_at', 'updated_at']],
+  ['idempotency_records', ['key', 'request_hash', 'status_code', 'response', 'created_at', 'expires_at']],
   [
     'webhook_deliveries',
     [
