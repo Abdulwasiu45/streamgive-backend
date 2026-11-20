@@ -1,6 +1,8 @@
 // src/env.ts
 import { z } from 'zod';
 
+import { logger } from './logger.js';
+
 const envSchema = z.object({
   DATABASE_URL: z.string().min(1, 'DATABASE_URL is required and must be a valid connection string'),
   PORT: z.coerce.number().positive('PORT must be a positive number').default(3000),
@@ -12,18 +14,18 @@ function validateEnv() {
   const result = envSchema.safeParse(process.env);
 
   if (!result.success) {
-    console.error('❌ Configuration Error: Invalid or missing environment variables:\n');
+    logger.error('Configuration Error: Invalid or missing environment variables');
     const formattedErrors = result.error.format();
-    
+
     for (const [key, value] of Object.entries(formattedErrors)) {
       if (key !== '_errors' && typeof value === 'object' && value !== null && '_errors' in value) {
         const errs = (value as { _errors: string[] })._errors;
         if (errs.length > 0) {
-          console.error(`  - ${key}: ${errs.join(', ')}`);
+          logger.error({ key, errors: errs }, 'Invalid environment variable');
         }
       }
     }
-    console.error('\nPlease check your .env file or environment configuration.');
+    logger.error('Please check your .env file or environment configuration');
     process.exit(1);
   }
 

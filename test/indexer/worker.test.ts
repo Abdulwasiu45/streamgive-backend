@@ -4,6 +4,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vites
 import { prisma } from '../../src/db.js';
 import { getCheckpoint, saveCheckpoint } from '../../src/indexer/checkpoint.js';
 import { rebuildEventFromDeadLetter } from '../../src/indexer/deadLetter.js';
+import { logger } from '../../src/logger.js';
 import type { ContractEvent } from '../../src/indexer/worker.js';
 import { fakeAddress, resetDb } from '../helpers/db.js';
 import { addressScVal, i128ScVal, makeEvent, symbolScVal, u64ScVal } from '../helpers/events.js';
@@ -107,10 +108,8 @@ describe('pollOnce', () => {
   beforeEach(() => {
     mocks.getEvents.mockReset();
     mocks.getLatestLedgerSequence.mockReset();
-    // The dead-letter path logs through console.error and the email
-    // notification stub through console.log; neither is under test here.
-    vi.spyOn(console, 'error').mockImplementation(() => {});
-    vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(logger, 'error').mockImplementation(() => {});
+    vi.spyOn(logger, 'info').mockImplementation(() => {});
   });
 
   afterEach(async () => {
@@ -358,7 +357,7 @@ describe('backoff on RPC failures (#115)', () => {
     mocks.getCheckpointState.mockResolvedValue({ lastLedger: 100 });
     mocks.saveCheckpoint.mockResolvedValue(undefined);
     // Every test here drives the failure path, which logs on purpose.
-    vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.spyOn(logger, 'error').mockImplementation(() => {});
   });
 
   it('does not overlap polls when an RPC request takes longer than the interval', async () => {
@@ -612,7 +611,7 @@ describe('startIndexer stop behavior', () => {
 
   it('recovers when the checkpoint is outside the RPC retention window', async () => {
     process.env.DONATION_VAULT_CONTRACT_ID = mocks.contractId;
-    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const loggerWarnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
 
     mocks.getCheckpointState.mockResolvedValue({
       lastLedger: 500,
@@ -629,12 +628,11 @@ describe('startIndexer stop behavior', () => {
     
     await pollOnce(handler);
 
-    expect(console.warn).toHaveBeenCalledWith(
-      expect.stringContaining('checkpoint 500 has aged out'),
+    expect(loggerWarnSpy).toHaveBeenCalledWith(
+      { checkpointLedger: 500, latestLedger: 10000 },
+      expect.stringContaining('checkpoint has aged out'),
     );
     expect(mocks.saveCheckpoint).toHaveBeenCalledWith(10000);
     expect(handler).not.toHaveBeenCalled();
-
-    vi.mocked(console.warn).mockRestore();
   });
 });
