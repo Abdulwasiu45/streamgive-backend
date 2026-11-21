@@ -163,3 +163,23 @@ indexer on one instance even then.
   keeps this service querying the database, which keeps the project active.
 - Percent-encode the password in the connection URL. A literal `#`
   truncates it, and a literal `@` breaks host parsing.
+
+
+## Deploying pre-built images from GHCR
+
+Release tags publish immutable pre-built Docker images to GitHub Container Registry (`ghcr.io`). To deploy a specific release tag or rollback:
+
+```sh
+# Pull a specific version tag
+docker pull ghcr.io/streamgive/streamgive-backend:v1.2.0
+
+# Run container with environment configuration
+docker run -d \
+  --name streamgive-backend \
+  -p 3000:3000 \
+  -e DATABASE_URL="postgresql://user:password@host:5432/db" \
+  -e SOROBAN_RPC_URL="https://soroban-testnet.stellar.org" \
+  ghcr.io/streamgive/streamgive-backend:v1.2.0
+```
+
+To rollback to a previous version, update the container image tag to the desired release tag or commit SHA tag (e.g. `ghcr.io/streamgive/streamgive-backend:sha-<commit>`).
