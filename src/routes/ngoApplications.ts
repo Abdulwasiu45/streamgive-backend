@@ -706,7 +706,6 @@ export async function ngoApplicationRoutes(app: FastifyInstance): Promise<void> 
           where: { id, status: 'PENDING' },
           data: {
             status: 'WITHDRAWN',
-            withdrawnAt: new Date(),
           },
         });
         return withdrawn;
