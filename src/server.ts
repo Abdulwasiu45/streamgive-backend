@@ -11,7 +11,7 @@ import packageJson from '../package.json' with { type: 'json' };
 
 import { MAINTENANCE_RETRY_AFTER_SECONDS, parseConfig } from './config.js';
 import { prisma } from './db.js';
-import { requireAdminSignature } from './middleware/adminAuth.js';
+import { configuredAdminAddresses, requireAdminSignature } from './middleware/adminAuth.js';
 import { recordHttpRequest, renderMetrics } from './metrics.js';
 import { getCheckpoint } from './indexer/checkpoint.js';
 import { donorRoutes } from './routes/donors.js';
@@ -20,6 +20,7 @@ import { indexerStatusRoutes } from './routes/indexerStatus.js';
 import { getLatestLedgerSequence } from './stellar/rpc.js';
 import { ngoApplicationRoutes } from './routes/ngoApplications.js';
 import { ngoRoutes } from './routes/ngos.js';
+import { getBuildVersionInfo } from './version.js';
 import { deadLetterRoutes } from './routes/deadLetters.js';
 import { notificationEndpointRoutes } from './routes/notificationEndpoints.js';
 import { notificationLogRoutes } from './routes/notificationLogs.js';
@@ -276,6 +277,17 @@ export function buildServer(options?: BuildServerOptions) {
     global: true,
     max: rateLimitMax,
     timeWindow: rateLimitWindow,
+    keyGenerator: (request) => {
+      const address = request.headers['x-admin-address'];
+      if (
+        request.routeOptions.config.adminRateLimit === true &&
+        typeof address === 'string' &&
+        configuredAdminAddresses().includes(address)
+      ) {
+        return `admin:${address}`;
+      }
+      return request.ip;
+    },
     // Spell the headers out instead of leaning on the plugin's defaults:
     // `Retry-After` is the machine-readable contract clients back off on
     // (RFC 9110 §10.2.3), and the `x-ratelimit-*` headers let a client see
@@ -467,6 +479,33 @@ export function buildServer(options?: BuildServerOptions) {
     }
   });
 
+  /**
+   * Returns build metadata (package version, git commit, and build time) with no secrets.
+   * @route GET /version
+   * @auth Public
+   */
+  app.get(
+    '/version',
+    {
+      schema: {
+        tags: ['System'],
+        summary: 'Get build version and commit metadata',
+        response: {
+          200: {
+            type: 'object',
+            properties: {
+              version: { type: 'string' },
+              commit: { type: 'string' },
+              buildTime: { type: ['string', 'null'] },
+            },
+            required: ['version', 'commit', 'buildTime'],
+          },
+        },
+      },
+    },
+    async () => getBuildVersionInfo(),
+  );
+
   app.addHook('onRoute', (route) => {
     const preHandlers = Array.isArray(route.preHandler)
       ? route.preHandler
@@ -474,6 +513,7 @@ export function buildServer(options?: BuildServerOptions) {
         ? [route.preHandler]
         : [];
     if (preHandlers.includes(requireAdminSignature)) {
+      route.config = { ...route.config, adminRateLimit: true };
       route.schema = {
         ...route.schema,
         security: [
@@ -496,6 +536,19 @@ export function buildServer(options?: BuildServerOptions) {
             limit: { type: 'integer', minimum: 1, maximum: 100, default: 100 },
             cursor: { type: 'string', format: 'uuid' },
             sort: { type: 'string', enum: ['newest', 'oldest', 'name'], default: 'newest' },
+            q: { type: 'string', maxLength: 100 },
+          },
+        },
+      },
+      '/v1/ngos/all': {
+        tags: ['NGOs'],
+        summary: 'List all NGOs for admin review',
+        querystring: {
+          type: 'object',
+          properties: {
+            limit: { type: 'integer', minimum: 1, maximum: 100, default: 100 },
+            cursor: { type: 'string', format: 'uuid' },
+            verified: { type: 'string', enum: ['true', 'false'] },
             q: { type: 'string', maxLength: 100 },
           },
         },

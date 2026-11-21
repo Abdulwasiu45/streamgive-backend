@@ -7,11 +7,13 @@ import {
   DEFAULT_RATE_LIMIT_WINDOW,
   DEFAULT_SOROBAN_RPC_URL,
   parseConfig,
+  DEFAULT_SHUTDOWN_TIMEOUT_MS,
   parseMaintenanceMode,
   parsePort,
   parseRateLimitMax,
   parseRateLimitWindow,
   parseRpcUrls,
+  parseShutdownTimeoutMs,
 } from '../src/config.js';
 
 describe('parseMaintenanceMode', () => {
@@ -169,5 +171,19 @@ describe('parseConfig', () => {
     expect(error.message).toContain('RATE_LIMIT_MAX');
     expect(error.message).toContain('RATE_LIMIT_WINDOW');
     expect(error.message).toContain('SOROBAN_RPC_URL');
+describe('parseShutdownTimeoutMs', () => {
+  it('uses the default for unset or blank values', () => {
+    expect(parseShutdownTimeoutMs(undefined)).toBe(DEFAULT_SHUTDOWN_TIMEOUT_MS);
+    expect(parseShutdownTimeoutMs('')).toBe(DEFAULT_SHUTDOWN_TIMEOUT_MS);
+  });
+
+  it('accepts a positive integer number of milliseconds', () => {
+    expect(parseShutdownTimeoutMs('12000')).toBe(12000);
+  });
+
+  it('rejects invalid or non-positive values', () => {
+    for (const value of ['abc', '0', '-1', '1.5', '9007199254740992']) {
+      expect(() => parseShutdownTimeoutMs(value)).toThrow(/SHUTDOWN_TIMEOUT_MS/);
+    }
   });
 });

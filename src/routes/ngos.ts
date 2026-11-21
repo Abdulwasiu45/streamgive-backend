@@ -5,6 +5,7 @@ import { Prisma } from '../generated/prisma/client.js';
 import { prisma } from '../db.js';
 import { sendPublicCacheable } from './cacheable.js';
 import { requireAdminSignature } from '../middleware/adminAuth.js';
+import { requireOwnerSignature } from '../middleware/ownerAuth.js';
 import { getPublicNgoName } from './ngoName.js';
 import { committedTotalsByToken } from './tokenTotals.js';
 
@@ -26,6 +27,29 @@ interface NgoListRow {
 const updateNgoSchema = z.object({
   displayName: z.string().nullable().optional(),
 });
+
+/**
+ * Owner profile update body; enforces the same limits as the NGO application
+ * form (`description` 1–5000 trimmed chars, `website` URL max 2048 chars with
+ * scheme-less HTTPS normalization, or null to clear website).
+ */
+export const updateNgoProfileSchema = z
+  .object({
+    description: z.string().trim().min(1).max(5000).optional(),
+    website: z
+      .union([
+        z.null(),
+        z
+          .string()
+          .trim()
+          .transform((val) => (val && !/^https?:\/\//i.test(val) ? `https://${val}` : val))
+          .pipe(z.string().url().max(2048)),
+      ])
+      .optional(),
+  })
+  .refine((data) => data.description !== undefined || data.website !== undefined, {
+    message: 'At least one of description or website must be provided',
+  });
 
 /** Public directory sort mode: newest, oldest, or name (default newest). */
 const sortSchema = z.enum(['newest', 'oldest', 'name']).default('newest');
@@ -80,6 +104,7 @@ const adminListQuerySchema = z.object({
     .enum(['true', 'false'])
     .optional()
     .transform((v) => (v === undefined ? undefined : v === 'true')),
+  q: z.string().max(100).optional(),
 });
 
 /** Builds the GET /ngos/:id response shape from a unique Prisma `where`. */
@@ -147,8 +172,9 @@ async function findNgoDetail(where: { id: string } | { ownerAddress: string }) {
     ...ngo,
     name: getPublicNgoName(ngo) || null,
     registered: ngo.name !== '',
-    description: approvedApp?.description ?? null,
-    website: approvedApp?.website ?? null,
+    description: ngo.description ?? approvedApp?.description ?? null,
+    website: ngo.website ?? approvedApp?.website ?? null,
+    profileUpdatedAt: ngo.profileUpdatedAt ?? null,
     country: approvedApp?.country ?? null,
     stats: {
       totalCommitted: stats.totalCommitted,
@@ -262,11 +288,25 @@ export async function ngoRoutes(app: FastifyInstance): Promise<void> {
         .code(400)
         .send({ error: 'invalid_request', details: parsedQuery.error.flatten() });
     }
-    const { limit, cursor, verified } = parsedQuery.data;
+    const { limit, cursor, verified, q } = parsedQuery.data;
+    const searchTerm = q?.trim() || undefined;
+
+    const where: Prisma.NgoWhereInput = {
+      ...(verified === undefined ? {} : { verified }),
+      ...(searchTerm
+        ? {
+            OR: [
+              { name: { contains: searchTerm, mode: 'insensitive' } },
+              { displayName: { contains: searchTerm, mode: 'insensitive' } },
+              { ownerAddress: { contains: searchTerm, mode: 'insensitive' } },
+            ],
+          }
+        : {}),
+    };
 
     const rows = await prisma.ngo.findMany({
-      where: verified === undefined ? {} : { verified },
-      orderBy: { createdAt: 'desc' },
+      where,
+      orderBy: [{ createdAt: 'desc' }, { id: 'asc' }],
       take: limit + 1,
       ...(cursor ? { skip: 1, cursor: { id: cursor } } : {}),
     });
@@ -420,5 +460,55 @@ export async function ngoRoutes(app: FastifyInstance): Promise<void> {
     });
 
     return { ...updated, name: updated.displayName || updated.name };
+  });
+
+  /**
+   * Lets a verified NGO owner update the NGO's public description and website.
+   * @route PATCH /v1/ngos/:id/profile
+   * @param id NGO UUID
+   * @body `{ description?: string, website?: string | null }`
+   * @auth Owner signature required via `x-owner-address`, `x-owner-timestamp`, and `x-owner-signature`.
+   */
+  app.patch('/ngos/:id/profile', { preHandler: requireOwnerSignature }, async (request, reply) => {
+    const ownerAddress = request.headers['x-owner-address'];
+    if (typeof ownerAddress !== 'string') {
+      return reply.code(401).send({ error: 'unauthorized' });
+    }
+
+    const parsedParams = idParamSchema.safeParse(request.params);
+    if (!parsedParams.success) {
+      return reply.code(400).send({ error: 'invalid_request' });
+    }
+
+    const parsedBody = updateNgoProfileSchema.safeParse(request.body);
+    if (!parsedBody.success) {
+      return reply
+        .code(400)
+        .send({ error: 'invalid_request', details: parsedBody.error.flatten() });
+    }
+
+    const ngo = await prisma.ngo.findUnique({ where: { id: parsedParams.data.id } });
+    if (!ngo) {
+      return reply.code(404).send({ error: 'not_found' });
+    }
+    if (ngo.ownerAddress !== ownerAddress) {
+      return reply.code(403).send({ error: 'forbidden' });
+    }
+    if (!ngo.verified) {
+      return reply.code(403).send({ error: 'ngo_not_verified' });
+    }
+
+    const updated = await prisma.ngo.update({
+      where: { id: ngo.id },
+      data: {
+        ...(parsedBody.data.description !== undefined
+          ? { description: parsedBody.data.description }
+          : {}),
+        ...(parsedBody.data.website !== undefined ? { website: parsedBody.data.website } : {}),
+        profileUpdatedAt: new Date(),
+      },
+    });
+
+    return { ...updated, name: getPublicNgoName(updated) || null };
   });
 }

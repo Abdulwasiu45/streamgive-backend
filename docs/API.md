@@ -6,6 +6,24 @@ backend. Except for health checks and metrics, API routes are mounted under
 addresses, timestamps, and signatures. JSON response fields shown are
 representative; timestamps are ISO 8601 strings.
 
+## Pagination
+
+All cursor endpoints accept an integer `limit` between 1 and 100, defaulting to 100. Omit `cursor` for the first page. Pass the previous response's `nextCursor` unchanged and keep the same filters and ordering. The cursor is the UUID of the last returned row and is exclusive. Stop on `nextCursor: null`, even when a page contains exactly `limit` rows.
+
+| GET endpoint | Default / max | Cursor or offset | End of results |
+| --- | --- | --- | --- |
+| /v1/streams | 100 / 100 | Stream UUID, newest first | `hasMore: false, nextCursor: null` |
+| /v1/streams/:id/activity | 100 / 100 | Event UUID, newest first | `hasMore: false, nextCursor: null`. Unknown UUID returns 400. |
+| /v1/donors | 100 / 100 | Donor UUID in the requested ranking | `nextCursor: null`. A cursor outside the ranking returns 400. |
+| /v1/ngos | 100 / 100 | NGO UUID in the selected sort and search | `nextCursor: null` |
+| /v1/ngos/all | 100 / 100 | NGO UUID, newest first | `nextCursor: null` |
+| /v1/ngos/:id/donors | 100 / 100 | Donor UUID, ascending by ID | `nextCursor: null` |
+| /v1/admin/dead-letters | 100 / 100 | Dead-letter UUID, newest first | `hasMore: false, nextCursor: null`. Unknown UUID produces an empty page. |
+| /v1/admin/notification-logs | 100 / 100 | Log UUID, newest first | `hasMore: false, nextCursor: null`. Unknown UUID produces an empty page. |
+| /v1/ngo-applications | 100 / 100 | `offset` defaults to 0 and accepts up to 10,000. Advance it by the number of items returned. | Stop on an empty page or when the next offset reaches `total`. |
+
+`GET /v1/ngos/:id` embeds up to 10 recent streams and returns `recentStreamsNextCursor` when more are available. Use this cursor with `GET /v1/streams` filtered to the same NGO. The donor CSV export streams the full result using internal batching. Other unpaged lists do not accept a continuation token.
+
 ## Authentication
 
 Routes marked **Admin signature** require all three headers:
@@ -811,15 +829,23 @@ until the submitted contact address is verified).
 ### `GET /v1/ngo-applications/verify-contact-email?token={token}`
 
 **Auth:** Public; requires the single-use token sent to the application contact
-email. Tokens expire after 24 hours. Returns `200` when verified or
+email. Tokens expire after 24 hours. GET renders a confirmation form without
+consuming the token, so mail scanners and link previews do not invalidate it.
+The token's validity is checked when the explicit POST below is submitted.
+
+### `POST /v1/ngo-applications/verify-contact-email?token={token}`
+
+**Auth:** Public; consumes the single-use token after explicit confirmation.
+Returns `200 {"verified":true}` when verified or
 `400 {"error":"invalid_or_expired_token"}` when invalid, expired, or already
 used.
 
 ### `POST /v1/ngo-applications/{id}/contact-email-verification`
 
 **Auth:** Admin signature. Sends a fresh verification link for an application
-that has not been verified. Returns `202` with a generic response whether the
-application is eligible or not, to avoid disclosing application status.
+that has not been verified, at most once every five minutes per application.
+Returns `202` with a generic response whether the application is eligible or
+not, or is still within its cooldown, to avoid disclosing application status.
 
 ### `POST /v1/ngo-applications/{id}/approve`
 
