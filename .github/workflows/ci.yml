@@ -44,12 +44,11 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
-      - name: Sync test database schema
-        # db push, not migrate deploy: no migration files exist yet (no
-        # local Postgres has been available to generate them from), and
-        # db push is the officially recommended way to sync an ephemeral
-        # test database directly from schema.prisma.
-        run: npx prisma db push
+      - name: Apply migrations
+        run: npx prisma migrate deploy
+
+      - name: Check migration drift
+        run: npx prisma migrate diff --from-schema-datamodel prisma/schema.prisma --to-migrations prisma/migrations --exit-code
 
       - name: Test and enforce coverage
         run: npx vitest run --coverage
