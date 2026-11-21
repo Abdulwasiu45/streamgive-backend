@@ -50,10 +50,10 @@ delete querystringDocs.$schema;
 const idParamSchema = z.object({ id: z.string().uuid() });
 const MAX_POSTGRES_BIGINT = 9_223_372_036_854_775_807n;
 const onChainIdParamSchema = z.object({
-  onChainId: z
-    .string()
-    .regex(/^(0|[1-9]\d{0,19})$/)
-    .refine((value) => BigInt(value) <= MAX_POSTGRES_BIGINT),
+  onChainId: z.string().refine((value) => {
+    if (!/^(0|[1-9]\d{0,19})$/.test(value)) return false;
+    return BigInt(value) <= MAX_POSTGRES_BIGINT;
+  }),
 });
 
 /**

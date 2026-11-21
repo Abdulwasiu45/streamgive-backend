@@ -591,6 +591,11 @@ describe('startIndexer stop behavior', () => {
     process.env.DONATION_VAULT_CONTRACT_ID = mocks.contractId;
     process.env.INDEXER_POLL_INTERVAL_MS = '10000';
     let lockHeld = false;
+    let releaseSecondPoll!: () => void;
+    const secondPollBlocked = new Promise<void>((resolve) => {
+      releaseSecondPoll = resolve;
+    });
+    let eventFetches = 0;
     mocks.tryAcquireIndexerLock.mockImplementation(async () => {
       if (lockHeld) return null;
       lockHeld = true;
@@ -605,7 +610,11 @@ describe('startIndexer stop behavior', () => {
     mocks.getEvents.mockClear();
     mocks.getCheckpointState.mockResolvedValue({ lastLedger: 100 });
     mocks.getLatestLedgerSequence.mockResolvedValue(100);
-    mocks.getEvents.mockResolvedValue({ events: [], latestLedger: 100 });
+    mocks.getEvents.mockImplementation(async () => {
+      eventFetches += 1;
+      if (eventFetches === 2) await secondPollBlocked;
+      return { events: [], latestLedger: 100 };
+    });
 
     let stopFirst: (() => Promise<void>) | undefined;
     let stopSecond: (() => Promise<void>) | undefined;
@@ -618,7 +627,8 @@ describe('startIndexer stop behavior', () => {
 
       process.env.INDEXER_POLL_INTERVAL_MS = '25';
       const secondWorker = await freshIndexer();
-      stopSecond = secondWorker.startIndexer(async () => {});
+      const stopSecondWorker = secondWorker.startIndexer(async () => {});
+      stopSecond = stopSecondWorker;
       await new Promise((resolve) => setTimeout(resolve, 75));
       expect(mocks.getLatestLedgerSequence).toHaveBeenCalledTimes(1);
 
@@ -628,6 +638,10 @@ describe('startIndexer stop behavior', () => {
       await vi.waitFor(() => {
         expect(mocks.getLatestLedgerSequence).toHaveBeenCalledTimes(2);
       });
+      const stoppingSecond = stopSecondWorker();
+      releaseSecondPoll();
+      await stoppingSecond;
+      stopSecond = undefined;
     } finally {
       await stopSecond?.();
       await stopFirst?.();
@@ -636,21 +650,23 @@ describe('startIndexer stop behavior', () => {
 
   it('recovers when the checkpoint is outside the RPC retention window', async () => {
     process.env.DONATION_VAULT_CONTRACT_ID = mocks.contractId;
-    const loggerWarnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
 
-    mocks.getCheckpointState.mockResolvedValue({
-      lastLedger: 500,
-      lastEventId: undefined,
-    });
-    mocks.getLatestLedgerSequence.mockResolvedValue(10000);
-    mocks.getEvents.mockRejectedValueOnce({
-      message: 'startLedger must be within the ledger range [9000, 10000]',
-    });
-    mocks.saveCheckpoint.mockResolvedValue(undefined);
+    mocks.getCheckpointState
+      .mockReset()
+      .mockResolvedValue({ lastLedger: 500, lastEventId: undefined });
+    mocks.getLatestLedgerSequence.mockReset().mockResolvedValue(10000);
+    mocks.getEvents
+      .mockReset()
+      .mockRejectedValueOnce({
+        message: 'startLedger must be within the ledger range [9000, 10000]',
+      });
+    mocks.saveCheckpoint.mockReset().mockResolvedValue(undefined);
 
     const { pollOnce } = await freshIndexer();
+    const { logger: workerLogger } = await import('../../src/logger.js');
+    const loggerWarnSpy = vi.spyOn(workerLogger, 'warn').mockImplementation(() => {});
     const handler = vi.fn();
-    
+
     await pollOnce(handler);
 
     expect(loggerWarnSpy).toHaveBeenCalledWith(
