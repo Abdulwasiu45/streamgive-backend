@@ -1,9 +1,19 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+
 import { describe, expect, it } from 'vitest';
 
 import packageJson from '../package.json' with { type: 'json' };
+import { generateOpenApiDocument } from '../src/scripts/exportOpenApi.js';
 import { buildServer } from '../src/server.js';
 
 describe('OpenAPI documentation', () => {
+  it('keeps committed openapi.json in sync with the generated OpenAPI specification', async () => {
+    const doc = await generateOpenApiDocument();
+    const committed = readFileSync(resolve(process.cwd(), 'openapi.json'), 'utf8');
+    expect(committed).toBe(`${JSON.stringify(doc, null, 2)}\n`);
+  });
+
   it('uses the package version and documents signed admin headers', async () => {
     const app = buildServer();
     await app.ready();
