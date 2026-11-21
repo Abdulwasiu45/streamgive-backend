@@ -4,9 +4,11 @@ import {
   DEFAULT_PORT,
   DEFAULT_RATE_LIMIT_MAX,
   DEFAULT_RATE_LIMIT_WINDOW,
+  DEFAULT_SHUTDOWN_TIMEOUT_MS,
   parsePort,
   parseRateLimitMax,
   parseRateLimitWindow,
+  parseShutdownTimeoutMs,
 } from '../src/config.js';
 
 describe('parsePort', () => {
@@ -84,5 +86,22 @@ describe('parseRateLimitWindow', () => {
   it('rejects zero and negative durations', () => {
     expect(() => parseRateLimitWindow('0')).toThrow(/RATE_LIMIT_WINDOW/);
     expect(() => parseRateLimitWindow('-5')).toThrow(/RATE_LIMIT_WINDOW/);
+  });
+});
+
+describe('parseShutdownTimeoutMs', () => {
+  it('uses the default for unset or blank values', () => {
+    expect(parseShutdownTimeoutMs(undefined)).toBe(DEFAULT_SHUTDOWN_TIMEOUT_MS);
+    expect(parseShutdownTimeoutMs('')).toBe(DEFAULT_SHUTDOWN_TIMEOUT_MS);
+  });
+
+  it('accepts a positive integer number of milliseconds', () => {
+    expect(parseShutdownTimeoutMs('12000')).toBe(12000);
+  });
+
+  it('rejects invalid or non-positive values', () => {
+    for (const value of ['abc', '0', '-1', '1.5', '9007199254740992']) {
+      expect(() => parseShutdownTimeoutMs(value)).toThrow(/SHUTDOWN_TIMEOUT_MS/);
+    }
   });
 });

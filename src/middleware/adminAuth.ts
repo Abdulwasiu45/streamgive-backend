@@ -63,7 +63,7 @@ export function sep53Hash(message: string): Buffer {
  * module is first imported (as tests do) would otherwise never be seen,
  * since a module-level const only evaluates once.
  */
-function configuredAdminAddresses(): string[] {
+export function configuredAdminAddresses(): string[] {
   const listed = (process.env.ADMIN_ADDRESSES ?? '').split(',');
   const single = process.env.ADMIN_ADDRESS ? [process.env.ADMIN_ADDRESS] : [];
   const cleaned = [...single, ...listed]

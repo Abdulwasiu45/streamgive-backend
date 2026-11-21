@@ -313,12 +313,32 @@ export async function ngoApplicationRoutes(app: FastifyInstance): Promise<void> 
   );
 
   /**
-   * Redeems the one-time link sent to an NGO application's contact email.
+   * Renders a confirmation page for the one-time link. GET must not consume
+   * the token because mail scanners and link previews fetch links automatically.
    * @route GET /v1/ngo-applications/verify-contact-email
+   * @query token opaque, single-use token sent by email
+   * @returns 200 HTML confirmation form; 400 invalid or expired token.
+   */
+  app.get('/ngo-applications/verify-contact-email', async (request, reply) => {
+    const parsed = contactVerificationTokenSchema.safeParse(request.query);
+    if (!parsed.success) return reply.code(400).send({ error: 'invalid_or_expired_token' });
+    const action =
+      `/v1/ngo-applications/verify-contact-email?token=${encodeURIComponent(parsed.data.token)}`;
+    return reply
+      .header('cache-control', 'no-store')
+      .type('text/html; charset=utf-8')
+      .send(
+        `<!doctype html><html lang="en"><meta charset="utf-8"><title>Verify contact email</title><p>Confirm this email address for your NGO application.</p><form method="post" action="${action}"><button type="submit">Confirm email</button></form></html>`,
+      );
+  });
+
+  /**
+   * Redeems the one-time link after an explicit form submission.
+   * @route POST /v1/ngo-applications/verify-contact-email
    * @query token opaque, single-use token sent by email
    * @returns 200 `{ verified: true }`; 400 invalid or expired token.
    */
-  app.get('/ngo-applications/verify-contact-email', async (request, reply) => {
+  app.post('/ngo-applications/verify-contact-email', async (request, reply) => {
     const parsed = contactVerificationTokenSchema.safeParse(request.query);
     if (!parsed.success) return reply.code(400).send({ error: 'invalid_or_expired_token' });
     const verified = await verifyContactToken(parsed.data.token);
