@@ -25,6 +25,7 @@ const mocks = vi.hoisted(() => {
     getLatestLedgerSequence: vi.fn(),
     getCheckpointState: vi.fn(),
     saveCheckpoint: vi.fn(),
+    tryAcquireIndexerLock: vi.fn(),
     // Memoised here, in a closure the module registry reset below does not
     // touch, so every re-import shares one PrismaClient (and one connection
     // pool) instead of opening a fresh one per case.
@@ -60,6 +61,17 @@ vi.mock('../../src/indexer/checkpoint.js', async () => {
     saveCheckpoint: mocks.saveCheckpoint,
   };
 });
+
+vi.mock('../../src/indexer/lock.js', () => ({
+  tryAcquireIndexerLock: mocks.tryAcquireIndexerLock,
+}));
+
+function acquiredIndexerLock() {
+  return {
+    isHeld: () => true,
+    release: async () => {},
+  };
+}
 
 /**
  * `pollOnce` caches its checkpoint in a module-level variable for the life of
@@ -351,6 +363,7 @@ describe('backoff on RPC failures (#115)', () => {
     // implementations in place, so a mockRejectedValue from one test would
     // otherwise leak into the next one. Each test below sets its own.
     vi.mocked(mocks.getLatestLedgerSequence).mockReset();
+    mocks.tryAcquireIndexerLock.mockResolvedValue(acquiredIndexerLock());
     // These cases assert the delay schedule, not what lands in the database,
     // and the checkpoint write on a successful poll would otherwise need a live
     // Postgres. Stub both; the pollOnce cases above keep the real pair.
@@ -556,6 +569,7 @@ describe('startIndexer stop behavior', () => {
   it('stops polling after the stop function is called', async () => {
     process.env.DONATION_VAULT_CONTRACT_ID = mocks.contractId;
     process.env.INDEXER_POLL_INTERVAL_MS = '5000';
+    mocks.tryAcquireIndexerLock.mockResolvedValue(acquiredIndexerLock());
     vi.useFakeTimers();
 
     mocks.getCheckpointState.mockResolvedValue({ lastLedger: 100 });
@@ -573,9 +587,20 @@ describe('startIndexer stop behavior', () => {
     expect(mocks.getLatestLedgerSequence.mock.calls.length).toBe(callsBeforeStop);
   });
 
-  it('keeps a second worker idle until the first worker releases the advisory lock', async () => {
+  it('keeps a second worker idle until the first worker releases the indexer lock', async () => {
     process.env.DONATION_VAULT_CONTRACT_ID = mocks.contractId;
     process.env.INDEXER_POLL_INTERVAL_MS = '10000';
+    let lockHeld = false;
+    mocks.tryAcquireIndexerLock.mockImplementation(async () => {
+      if (lockHeld) return null;
+      lockHeld = true;
+      return {
+        isHeld: () => lockHeld,
+        release: async () => {
+          lockHeld = false;
+        },
+      };
+    });
     mocks.getLatestLedgerSequence.mockClear();
     mocks.getEvents.mockClear();
     mocks.getCheckpointState.mockResolvedValue({ lastLedger: 100 });

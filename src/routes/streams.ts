@@ -48,11 +48,12 @@ delete querystringDocs.$schema;
 
 /** Params for stream detail and activity routes; `id` must be a stream UUID. */
 const idParamSchema = z.object({ id: z.string().uuid() });
+const MAX_POSTGRES_BIGINT = 9_223_372_036_854_775_807n;
 const onChainIdParamSchema = z.object({
   onChainId: z
     .string()
     .regex(/^(0|[1-9]\d{0,19})$/)
-    .refine((value) => BigInt(value) <= 18_446_744_073_709_551_615n),
+    .refine((value) => BigInt(value) <= MAX_POSTGRES_BIGINT),
 });
 
 /**

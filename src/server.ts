@@ -502,27 +502,29 @@ export function buildServer(options?: BuildServerOptions) {
    * @route GET /version
    * @auth Public
    */
-  app.get(
-    '/version',
-    {
-      schema: {
-        tags: ['System'],
-        summary: 'Get build version and commit metadata',
-        response: {
-          200: {
-            type: 'object',
-            properties: {
-              version: { type: 'string' },
-              commit: { type: 'string' },
-              buildTime: { type: ['string', 'null'] },
+  app.register(async (versionRoutes) => {
+    versionRoutes.get(
+      '/version',
+      {
+        schema: {
+          tags: ['System'],
+          summary: 'Get build version and commit metadata',
+          response: {
+            200: {
+              type: 'object',
+              properties: {
+                version: { type: 'string' },
+                commit: { type: 'string' },
+                buildTime: { type: 'string', nullable: true },
+              },
+              required: ['version', 'commit', 'buildTime'],
             },
-            required: ['version', 'commit', 'buildTime'],
           },
         },
       },
-    },
-    async () => getBuildVersionInfo(),
-  );
+      async () => getBuildVersionInfo(),
+    );
+  });
 
   app.addHook('onRoute', (route) => {
     const preHandlers = Array.isArray(route.preHandler)

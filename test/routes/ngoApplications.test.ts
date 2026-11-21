@@ -847,7 +847,7 @@ describe('GET /v1/ngo-applications/stats', () => {
 
     expect(response.statusCode).toBe(200);
     const body = response.json();
-    expect(body.counts).toEqual({ PENDING: 2, APPROVED: 1, REJECTED: 1 });
+    expect(body.counts).toEqual({ PENDING: 2, APPROVED: 1, REJECTED: 1, WITHDRAWN: 0 });
     expect(body.total).toBe(4);
 
     await app.close();
@@ -865,7 +865,7 @@ describe('GET /v1/ngo-applications/stats', () => {
 
     expect(response.statusCode).toBe(200);
     const body = response.json();
-    expect(body.counts).toEqual({ PENDING: 0, APPROVED: 0, REJECTED: 0 });
+    expect(body.counts).toEqual({ PENDING: 0, APPROVED: 0, REJECTED: 0, WITHDRAWN: 0 });
     expect(body.total).toBe(0);
 
     await app.close();
