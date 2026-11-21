@@ -2,8 +2,12 @@ import { describe, expect, it } from 'vitest';
 
 import {
   DEFAULT_PORT,
+  DEFAULT_APPLICATION_RATE_LIMIT_MAX,
+  DEFAULT_HEALTH_CHECK_TIMEOUT_MS,
   DEFAULT_RATE_LIMIT_MAX,
   DEFAULT_RATE_LIMIT_WINDOW,
+  parseApplicationRateLimitMax,
+  parseHealthCheckTimeoutMs,
   parsePort,
   parseRateLimitMax,
   parseRateLimitWindow,
@@ -84,5 +88,39 @@ describe('parseRateLimitWindow', () => {
   it('rejects zero and negative durations', () => {
     expect(() => parseRateLimitWindow('0')).toThrow(/RATE_LIMIT_WINDOW/);
     expect(() => parseRateLimitWindow('-5')).toThrow(/RATE_LIMIT_WINDOW/);
+  });
+});
+
+describe('parseApplicationRateLimitMax', () => {
+  it('uses the default when the value is unset or blank', () => {
+    expect(parseApplicationRateLimitMax(undefined)).toBe(DEFAULT_APPLICATION_RATE_LIMIT_MAX);
+    expect(parseApplicationRateLimitMax('  ')).toBe(DEFAULT_APPLICATION_RATE_LIMIT_MAX);
+  });
+
+  it('accepts a positive integer', () => {
+    expect(parseApplicationRateLimitMax('8')).toBe(8);
+  });
+
+  it('rejects invalid values with a clear error', () => {
+    expect(() => parseApplicationRateLimitMax('invalid')).toThrow(
+      'RATE_LIMIT_APPLICATION_MAX must be a positive integer, received "invalid"',
+    );
+  });
+});
+
+describe('parseHealthCheckTimeoutMs', () => {
+  it('uses the default when the value is unset or blank', () => {
+    expect(parseHealthCheckTimeoutMs(undefined)).toBe(DEFAULT_HEALTH_CHECK_TIMEOUT_MS);
+    expect(parseHealthCheckTimeoutMs('  ')).toBe(DEFAULT_HEALTH_CHECK_TIMEOUT_MS);
+  });
+
+  it('accepts a positive integer duration', () => {
+    expect(parseHealthCheckTimeoutMs('5000')).toBe(5000);
+  });
+
+  it('rejects invalid values with a clear error', () => {
+    expect(() => parseHealthCheckTimeoutMs('invalid')).toThrow(
+      'HEALTH_CHECK_TIMEOUT_MS must be a positive integer (milliseconds), received "invalid"',
+    );
   });
 });

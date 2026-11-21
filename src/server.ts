@@ -9,7 +9,12 @@ import Fastify from 'fastify';
 import type { FastifyError, FastifyReply } from 'fastify';
 import packageJson from '../package.json' with { type: 'json' };
 
-import { parseRateLimitMax, parseRateLimitWindow, parseSlowRequestThresholdMs } from './config.js';
+import {
+  parseHealthCheckTimeoutMs,
+  parseRateLimitMax,
+  parseRateLimitWindow,
+  parseSlowRequestThresholdMs,
+} from './config.js';
 import { prisma } from './db.js';
 import { requireAdminSignature } from './middleware/adminAuth.js';
 import { recordHttpRequest, renderMetrics } from './metrics.js';
@@ -126,6 +131,7 @@ export function buildServer(options?: BuildServerOptions) {
   const rateLimitMax = parseRateLimitMax(process.env.RATE_LIMIT_MAX);
   const rateLimitWindow = parseRateLimitWindow(process.env.RATE_LIMIT_WINDOW);
   const slowRequestThresholdMs = parseSlowRequestThresholdMs(process.env.SLOW_REQUEST_THRESHOLD_MS);
+  const healthCheckTimeoutMs = parseHealthCheckTimeoutMs(process.env.HEALTH_CHECK_TIMEOUT_MS);
   const trustProxySetting =
     options?.trustProxy !== undefined
       ? options.trustProxy
@@ -402,11 +408,6 @@ export function buildServer(options?: BuildServerOptions) {
     });
   }
 
-  const HEALTH_CHECK_TIMEOUT_MS = parseInt(
-    process.env.HEALTH_CHECK_TIMEOUT_MS ?? '3000',
-    10,
-  );
-
   /**
    * Liveness probe — checks the database is reachable and returns the minimal
    * contract Render and uptime pingers expect: a plain 200 with a status flag.
@@ -417,7 +418,7 @@ export function buildServer(options?: BuildServerOptions) {
    */
   const healthHandler = async (_req: unknown, reply: FastifyReply) => {
     const dbResult = await Promise.allSettled([
-      withTimeout(prisma.$queryRaw`SELECT 1`, HEALTH_CHECK_TIMEOUT_MS),
+      withTimeout(prisma.$queryRaw`SELECT 1`, healthCheckTimeoutMs),
     ]);
 
     const db = dbResult[0].status === 'fulfilled' ? 'ok' : 'error';
@@ -440,11 +441,11 @@ export function buildServer(options?: BuildServerOptions) {
   app.get('/health/ready', async (request, reply) => {
     try {
       // 1. Check DB (time-boxed)
-      await withTimeout(prisma.$queryRaw`SELECT 1`, HEALTH_CHECK_TIMEOUT_MS);
+      await withTimeout(prisma.$queryRaw`SELECT 1`, healthCheckTimeoutMs);
 
       // 2. Get RPC and Indexer info (both time-boxed)
       const [latestLedger, checkpointLedger] = await Promise.all([
-        withTimeout(getLatestLedgerSequence(), HEALTH_CHECK_TIMEOUT_MS),
+        withTimeout(getLatestLedgerSequence(), healthCheckTimeoutMs),
         getCheckpoint(),
       ]);
 

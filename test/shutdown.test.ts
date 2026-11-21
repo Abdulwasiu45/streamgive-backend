@@ -120,3 +120,27 @@ describe('unhandledRejection policy', () => {
     expect(exitSpy).toHaveBeenCalledWith(1);
   });
 });
+
+describe('uncaughtException policy', () => {
+  let exitSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockApp.close.mockResolvedValue(undefined);
+    exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
+  });
+
+  afterEach(() => {
+    exitSpy.mockRestore();
+  });
+
+  it('tears down the indexer and server before exiting on an uncaught exception', async () => {
+    process.emit('uncaughtException', new Error('unexpected failure'));
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    expect(mockStopIndexer).toHaveBeenCalled();
+    expect(mockApp.close).toHaveBeenCalled();
+    expect(exitSpy).toHaveBeenCalledWith(1);
+  });
+});

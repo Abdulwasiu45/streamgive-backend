@@ -9,8 +9,10 @@
 
 export const DEFAULT_PORT = 3000;
 export const DEFAULT_RATE_LIMIT_MAX = 100;
+export const DEFAULT_APPLICATION_RATE_LIMIT_MAX = 5;
 export const DEFAULT_RATE_LIMIT_WINDOW = '1 minute';
 export const DEFAULT_SLOW_REQUEST_THRESHOLD_MS = 1000;
+export const DEFAULT_HEALTH_CHECK_TIMEOUT_MS = 3000;
 
 /** Undefined, empty and whitespace-only values are treated as unset. */
 function configured(value: string | undefined): string | undefined {
@@ -62,6 +64,38 @@ export function parseRateLimitMax(value: string | undefined): number {
   }
 
   return max;
+}
+
+/** Validates RATE_LIMIT_APPLICATION_MAX as a positive integer. */
+export function parseApplicationRateLimitMax(value: string | undefined): number {
+  const raw = configured(value);
+  if (raw === undefined) {
+    return DEFAULT_APPLICATION_RATE_LIMIT_MAX;
+  }
+
+  if (!/^\d+$/.test(raw) || !Number.isSafeInteger(Number(raw)) || Number(raw) < 1) {
+    throw new Error(
+      `RATE_LIMIT_APPLICATION_MAX must be a positive integer, received "${raw}"`,
+    );
+  }
+
+  return Number(raw);
+}
+
+/** Validates HEALTH_CHECK_TIMEOUT_MS as a positive integer duration. */
+export function parseHealthCheckTimeoutMs(value: string | undefined): number {
+  const raw = configured(value);
+  if (raw === undefined) {
+    return DEFAULT_HEALTH_CHECK_TIMEOUT_MS;
+  }
+
+  if (!/^\d+$/.test(raw) || !Number.isSafeInteger(Number(raw)) || Number(raw) < 1) {
+    throw new Error(
+      `HEALTH_CHECK_TIMEOUT_MS must be a positive integer (milliseconds), received "${raw}"`,
+    );
+  }
+
+  return Number(raw);
 }
 
 // The units @fastify/rate-limit accepts for `timeWindow`, plus the bare

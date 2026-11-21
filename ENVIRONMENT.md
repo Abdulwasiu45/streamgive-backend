@@ -37,13 +37,13 @@ Admin requests are authenticated with a signed timestamp header. The timestamp *
 | `RATE_LIMIT_MAX` | No | `100` | Global maximum number of requests allowed per time window across the API. Must be a positive integer; zero or a non-numeric value aborts startup. |
 | `RATE_LIMIT_WINDOW` | No | `1 minute` | Global rate-limit time window, such as `1 minute` or `10000` milliseconds. Must be a positive duration; an unparseable value aborts startup. |
 | `SLOW_REQUEST_THRESHOLD_MS` | No | `1000` | Requests slower than this (milliseconds) are logged as a `slow request` warning with route, status and duration. `0` disables it; a non-integer aborts startup. |
-| `RATE_LIMIT_APPLICATION_MAX` | No | `5` | Maximum number of NGO application submissions allowed per time window. |
+| `RATE_LIMIT_APPLICATION_MAX` | No | `5` | Maximum number of NGO application submissions allowed per time window. Must be a positive integer; an invalid value aborts startup. |
 | `RATE_LIMIT_APPLICATION_WINDOW` | No | `1 minute` | Rate-limit time window for NGO application submissions. |
 | `TRUST_PROXY` | No | `true` | Controls Fastify's `trustProxy` setting to read client IPs from `X-Forwarded-For`. Behind reverse proxies such as Render, this helps rate limiting use individual client IPs rather than the proxy IP. Accepts `true` (default), `false`, a bounded hop count (e.g. `1`), or a comma-separated list of trusted IPs/CIDRs. |
 | `LOG_LEVEL` | No | `info` | Pino log level: `fatal`, `error`, `warn`, `info`, `debug`, or `trace`. |
 | `LOG_RETENTION_DAYS` | No | `90` | Age in days before notification logs and resolved indexer dead letters are pruned daily. Unresolved dead letters are retained. |
 | `NODE_ENV` | No | Unset (treated as development) | Set to `production` to switch logging to structured JSON instead of `pino-pretty`. Set automatically inside the Docker image. |
-| `HEALTH_CHECK_TIMEOUT_MS` | No | `3000` | Maximum duration in milliseconds allowed for each health-check dependency call before it is reported as degraded. |
+| `HEALTH_CHECK_TIMEOUT_MS` | No | `3000` | Maximum duration in milliseconds allowed for each health-check dependency call before it is reported as degraded. Must be a positive integer; an invalid value aborts startup. |
 | `BODY_LIMIT_BYTES` | No | `1048576` | Maximum request body size in bytes (1 MiB). Must be a positive integer. Requests above the limit receive `413 { "error": "payload_too_large" }`. |
 | `RESEND_API_KEY` | No | — | Resend API key used to send NGO contact-email verification messages. Required, together with `NOTIFY_EMAIL_FROM` and `API_PUBLIC_URL`, for verification emails to be sent; other notification events remain in log-only stub mode. |
 | `NOTIFY_EMAIL_FROM` | No | — | Sender address used by Resend for contact-email verification. Required when `RESEND_API_KEY` is configured. |

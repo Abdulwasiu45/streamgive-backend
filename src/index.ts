@@ -37,6 +37,7 @@ const app = (() => {
 // event gets retried on the next poll instead of silently skipped.
 const stopIndexer = startIndexer(dispatchEvent);
 const stopWebhookDeliveryWorker = startWebhookDeliveryWorker();
+const FATAL_SHUTDOWN_TIMEOUT_MS = 30_000;
 
 /**
  * Tear down the indexer and HTTP server, then resolve. The caller is
@@ -51,19 +52,32 @@ export async function shutdown(signal: string): Promise<void> {
   await app.close();
 }
 
-// An unhandled promise rejection leaves the process in an unknown state just
-// like an uncaught synchronous exception — tear everything down cleanly and
-// let the orchestrator (Docker / Kubernetes / Render) restart the process.
+function shutdownAfterFatalError(source: 'unhandledRejection' | 'uncaughtException', err: unknown) {
+  app.log.error({ err }, `${source} — shutting down`);
+  const hardExitTimer = setTimeout(() => {
+    app.log.error(
+      { source, timeoutMs: FATAL_SHUTDOWN_TIMEOUT_MS },
+      'shutdown timed out; forcing exit',
+    );
+    process.exit(1);
+  }, FATAL_SHUTDOWN_TIMEOUT_MS);
+
+  shutdown(source)
+    .catch((shutdownError) => app.log.error({ err: shutdownError }, 'error during shutdown'))
+    .finally(() => {
+      clearTimeout(hardExitTimer);
+      process.exit(1);
+    });
+}
+
+// Either fatal process error leaves the application in an unknown state.
+// Perform the same graceful teardown, with a hard exit if cleanup stalls.
 process.on('unhandledRejection', (reason) => {
-  app.log.error({ err: reason }, 'unhandled rejection — shutting down');
-  shutdown('unhandledRejection')
-    .catch((err) => app.log.error({ err }, 'error during shutdown'))
-    .finally(() => process.exit(1));
+  shutdownAfterFatalError('unhandledRejection', reason);
 });
 
 process.on('uncaughtException', (err) => {
-  app.log.error({ err }, 'uncaught exception');
-  process.exit(1);
+  shutdownAfterFatalError('uncaughtException', err);
 });
 
 app.listen({ port, host: '0.0.0.0' }).catch((err) => {

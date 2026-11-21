@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { Keypair, StrKey } from '@stellar/stellar-sdk';
 import { z } from 'zod';
 
+import { parseApplicationRateLimitMax } from '../config.js';
 import { prisma } from '../db.js';
 import { requireAdminSignature, sep53Hash } from '../middleware/adminAuth.js';
 import { notify } from '../notifications/service.js';
@@ -161,6 +162,10 @@ async function createApplicationUnlessBlocked(data: z.infer<typeof applicationSc
 }
 
 export async function ngoApplicationRoutes(app: FastifyInstance): Promise<void> {
+  const applicationRateLimitMax = parseApplicationRateLimitMax(
+    process.env.RATE_LIMIT_APPLICATION_MAX,
+  );
+
   /**
    * Issues a short-lived challenge that must be signed by the NGO owner address.
    * @route POST /v1/ngo-applications/challenge
@@ -207,7 +212,7 @@ export async function ngoApplicationRoutes(app: FastifyInstance): Promise<void> 
     {
       config: {
         rateLimit: {
-          max: Number(process.env.RATE_LIMIT_APPLICATION_MAX ?? 5),
+          max: applicationRateLimitMax,
           timeWindow: process.env.RATE_LIMIT_APPLICATION_WINDOW ?? '1 minute',
         },
       },
@@ -336,7 +341,7 @@ export async function ngoApplicationRoutes(app: FastifyInstance): Promise<void> 
     {
       config: {
         rateLimit: {
-          max: Number(process.env.RATE_LIMIT_APPLICATION_MAX ?? 5),
+          max: applicationRateLimitMax,
           timeWindow: process.env.RATE_LIMIT_APPLICATION_WINDOW ?? '1 minute',
         },
       },
