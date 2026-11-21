@@ -11,9 +11,13 @@ concurrency:
 
 jobs:
   build-test:
-    name: Lint, typecheck, test
+    name: Lint, typecheck, test (Node ${{ matrix.node-version }})
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: [20, 22]
     services:
       postgres:
         image: postgres:16
@@ -37,7 +41,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: ${{ matrix.node-version }}
           cache: npm
 
       - name: Install dependencies
