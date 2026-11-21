@@ -6,6 +6,7 @@ WORKDIR /app
 # postinstall `prisma generate`, which needs the schema — is cached across
 # builds unless dependencies or the schema actually change.
 COPY package.json package-lock.json ./
+COPY prisma.config.ts ./
 COPY prisma ./prisma
 RUN npm ci
 
