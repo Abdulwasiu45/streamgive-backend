@@ -609,11 +609,11 @@ describe('startIndexer stop behavior', () => {
     mocks.getLatestLedgerSequence.mockClear();
     mocks.getEvents.mockClear();
     mocks.getCheckpointState.mockResolvedValue({ lastLedger: 100 });
-    mocks.getLatestLedgerSequence.mockResolvedValue(100);
+    mocks.getLatestLedgerSequence.mockResolvedValue(101);
     mocks.getEvents.mockImplementation(async () => {
       eventFetches += 1;
       if (eventFetches === 2) await secondPollBlocked;
-      return { events: [], latestLedger: 100 };
+      return { events: [], latestLedger: 101 };
     });
 
     let stopFirst: (() => Promise<void>) | undefined;
