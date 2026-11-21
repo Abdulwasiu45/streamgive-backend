@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { prisma } from '../../src/db.js';
 import { buildServer } from '../../src/server.js';
@@ -332,9 +332,8 @@ describe('GET /v1/donors/:address/streams.csv', () => {
       `attachment; filename="donor-${donor.address}-streams.csv"`,
     );
 
-    const body = response.body.trim();
-    expect(body).toBe(
-      'id,onChainId,ngoId,ngoName,ngoAddress,tokenAddress,rate,lastRate,balance,withdrawn,status,createdTxHash,createdAt,updatedAt',
+    expect(response.body).toBe(
+      'id,onChainId,ngoId,ngoName,ngoAddress,tokenAddress,rate,lastRate,balance,withdrawn,status,createdTxHash,createdAt,updatedAt\r\n',
     );
 
     await app.close();

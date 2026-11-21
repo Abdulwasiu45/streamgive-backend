@@ -2,20 +2,56 @@ import { readFile, readdir } from 'node:fs/promises';
 import path from 'node:path';
 
 import { Client } from 'pg';
-import { Prisma } from '../src/generated/prisma/client.js';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
-const EXPECTED_TABLES = Prisma.dmmf.datamodel.models.map((model) => ({
-  table: model.dbName ?? model.name,
-  columns: model.fields
-    .filter((field) => field.kind !== 'object')
-    .map((field) => field.dbName ?? field.name),
-}));
+const ROOT = process.cwd();
+
+function parseSchemaModels(schema: string): {
+  table: string;
+  columns: string[];
+}[] {
+  const modelNames = new Set(
+    Array.from(schema.matchAll(/^model\s+(\w+)\s*\{/gm), (match) => match[1]),
+  );
+  const models: { table: string; columns: string[] }[] = [];
+  let current: { table: string; columns: string[] } | undefined;
+
+  for (const line of schema.split(/\r?\n/)) {
+    const modelDeclaration = /^\s*model\s+(\w+)\s*\{/.exec(line);
+    if (modelDeclaration) {
+      current = { table: modelDeclaration[1], columns: [] };
+      continue;
+    }
+
+    if (!current) continue;
+    if (/^\s*}/.test(line)) {
+      models.push({ table: current.table, columns: current.columns });
+      current = undefined;
+      continue;
+    }
+
+    const tableMapping = /^\s*@@map\("([^"]+)"\)/.exec(line);
+    if (tableMapping) {
+      current.table = tableMapping[1];
+      continue;
+    }
+
+    const field = /^\s+(\w+)\s+(\w+)(?:\?|\[\])?\s+/.exec(line);
+    if (field && !modelNames.has(field[2])) {
+      const columnMapping = /@map\("([^"]+)"\)/.exec(line);
+      current.columns.push(columnMapping?.[1] ?? field[1]);
+    }
+  }
+
+  return models;
+}
+
+const schema = await readFile(path.join(ROOT, 'prisma', 'schema.prisma'), 'utf8');
+const EXPECTED_TABLES = parseSchemaModels(schema);
 
 /** Tables managed by Prisma Migrate itself — not part of the app schema. */
 const PRISMA_INTERNAL_TABLES = new Set(['_prisma_migrations']);
 
-const ROOT = process.cwd();
 const MIGRATIONS_DIR = path.join(ROOT, 'prisma', 'migrations');
 
 function findSchemaDrift(

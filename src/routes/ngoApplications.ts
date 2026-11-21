@@ -445,7 +445,7 @@ export async function ngoApplicationRoutes(app: FastifyInstance): Promise<void> 
    * Counts applications grouped by review status.
    * @route GET /v1/ngo-applications/stats
    * @auth Admin signature required via `x-admin-address`, `x-admin-timestamp`, and `x-admin-signature`.
-   * @returns 200 `{ counts: { PENDING, APPROVED, REJECTED }, total }`.
+   * @returns 200 `{ counts: { PENDING, APPROVED, REJECTED, WITHDRAWN }, total }`.
    */
   app.get('/ngo-applications/stats', { preHandler: requireAdminSignature }, async () => {
     const grouped = await prisma.ngoApplication.groupBy({
@@ -726,7 +726,6 @@ export async function ngoApplicationRoutes(app: FastifyInstance): Promise<void> 
           where: { id, status: 'PENDING' },
           data: {
             status: 'WITHDRAWN',
-            withdrawnAt: new Date(),
           },
         });
         return withdrawn;

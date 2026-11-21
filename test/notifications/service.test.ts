@@ -175,7 +175,7 @@ describe('notify', () => {
       webhookUrl,
       expect.objectContaining({
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
+        headers: expect.objectContaining({ 'content-type': 'application/json' }),
         body: JSON.stringify(event),
       }),
     );

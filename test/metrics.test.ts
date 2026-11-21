@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import parsePrometheusTextFormat from 'parse-prometheus-text-format';
 
 vi.mock('../src/routes/ngoApplications.js', () => ({
   ngoApplicationRoutes: async () => {},
@@ -35,6 +36,8 @@ describe('GET /metrics', () => {
 
     expect(response.statusCode).toBe(200);
     expect(response.headers['content-type']).toContain('text/plain');
+    expect(response.body.endsWith('\n')).toBe(true);
+    parsePrometheusTextFormat(response.body);
     expect(response.body).toContain('# TYPE streamgive_http_requests_total counter');
     expect(response.body).toContain(
       'streamgive_http_requests_total{method="GET",route="unmatched",status_code="404"}',
