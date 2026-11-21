@@ -17,7 +17,7 @@ import {
   parseSlowRequestThresholdMs,
 } from './config.js';
 import { prisma } from './db.js';
-import { requireAdminSignature } from './middleware/adminAuth.js';
+import { configuredAdminAddresses, requireAdminSignature } from './middleware/adminAuth.js';
 import { recordHttpRequest, renderMetrics } from './metrics.js';
 import { getCheckpoint } from './indexer/checkpoint.js';
 import { donorRoutes } from './routes/donors.js';
@@ -303,6 +303,17 @@ export function buildServer(options?: BuildServerOptions) {
     global: true,
     max: rateLimitMax,
     timeWindow: rateLimitWindow,
+    keyGenerator: (request) => {
+      const address = request.headers['x-admin-address'];
+      if (
+        request.routeOptions.config.adminRateLimit === true &&
+        typeof address === 'string' &&
+        configuredAdminAddresses().includes(address)
+      ) {
+        return `admin:${address}`;
+      }
+      return request.ip;
+    },
     // Spell the headers out instead of leaning on the plugin's defaults:
     // `Retry-After` is the machine-readable contract clients back off on
     // (RFC 9110 §10.2.3), and the `x-ratelimit-*` headers let a client see
@@ -531,6 +542,7 @@ export function buildServer(options?: BuildServerOptions) {
         ? [route.preHandler]
         : [];
     if (preHandlers.includes(requireAdminSignature)) {
+      route.config = { ...route.config, adminRateLimit: true };
       route.schema = {
         ...route.schema,
         security: [

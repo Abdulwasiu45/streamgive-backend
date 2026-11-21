@@ -3,7 +3,7 @@
 // before anything else is imported.
 import 'dotenv/config';
 
-import { parsePort } from './config.js';
+import { parsePort, parseShutdownTimeoutMs } from './config.js';
 import { dispatchEvent } from './indexer/dispatch.js';
 import { startIndexer } from './indexer/worker.js';
 import { logger } from './logger.js';
@@ -20,6 +20,14 @@ function fail(message: string): never {
 const port = (() => {
   try {
     return parsePort(process.env.PORT);
+  } catch (err) {
+    fail(err instanceof Error ? err.message : String(err));
+  }
+})();
+
+const shutdownTimeoutMs = (() => {
+  try {
+    return parseShutdownTimeoutMs(process.env.SHUTDOWN_TIMEOUT_MS);
   } catch (err) {
     fail(err instanceof Error ? err.message : String(err));
   }
@@ -47,9 +55,32 @@ const stopWebhookDeliveryWorker = startWebhookDeliveryWorker();
  */
 export async function shutdown(signal: string): Promise<void> {
   app.log.info({ signal }, 'shutting down');
-  await stopIndexer();
-  await stopWebhookDeliveryWorker();
-  await app.close();
+  let running = 'indexer';
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  const cleanup = async () => {
+    await stopIndexer();
+    running = 'webhook delivery worker';
+    await stopWebhookDeliveryWorker();
+    running = 'HTTP server and database connections';
+    await app.close();
+  };
+
+  try {
+    await Promise.race([
+      cleanup(),
+      new Promise<never>((_, reject) => {
+        timeout = setTimeout(() => {
+          app.log.error(
+            { signal, timeoutMs: shutdownTimeoutMs, running },
+            'shutdown timed out',
+          );
+          reject(new Error(`shutdown timed out while waiting for ${running}`));
+        }, shutdownTimeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timeout !== undefined) clearTimeout(timeout);
+  }
 }
 
 // An unhandled promise rejection leaves the process in an unknown state just

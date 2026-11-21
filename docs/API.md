@@ -829,15 +829,23 @@ until the submitted contact address is verified).
 ### `GET /v1/ngo-applications/verify-contact-email?token={token}`
 
 **Auth:** Public; requires the single-use token sent to the application contact
-email. Tokens expire after 24 hours. Returns `200` when verified or
+email. Tokens expire after 24 hours. GET renders a confirmation form without
+consuming the token, so mail scanners and link previews do not invalidate it.
+The token's validity is checked when the explicit POST below is submitted.
+
+### `POST /v1/ngo-applications/verify-contact-email?token={token}`
+
+**Auth:** Public; consumes the single-use token after explicit confirmation.
+Returns `200 {"verified":true}` when verified or
 `400 {"error":"invalid_or_expired_token"}` when invalid, expired, or already
 used.
 
 ### `POST /v1/ngo-applications/{id}/contact-email-verification`
 
 **Auth:** Admin signature. Sends a fresh verification link for an application
-that has not been verified. Returns `202` with a generic response whether the
-application is eligible or not, to avoid disclosing application status.
+that has not been verified, at most once every five minutes per application.
+Returns `202` with a generic response whether the application is eligible or
+not, or is still within its cooldown, to avoid disclosing application status.
 
 ### `POST /v1/ngo-applications/{id}/approve`
 

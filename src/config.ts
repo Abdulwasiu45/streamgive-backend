@@ -11,6 +11,7 @@ export const DEFAULT_PORT = 3000;
 export const DEFAULT_RATE_LIMIT_MAX = 100;
 export const DEFAULT_RATE_LIMIT_WINDOW = '1 minute';
 export const DEFAULT_SLOW_REQUEST_THRESHOLD_MS = 1000;
+export const DEFAULT_SHUTDOWN_TIMEOUT_MS = 30_000;
 export const MAINTENANCE_RETRY_AFTER_SECONDS = 300;
 
 /** Undefined, empty and whitespace-only values are treated as unset. */
@@ -121,6 +122,22 @@ export function parseSlowRequestThresholdMs(value: string | undefined): number {
   if (!/^\d+$/.test(raw) || !Number.isSafeInteger(Number(raw))) {
     throw new Error(
       `SLOW_REQUEST_THRESHOLD_MS must be a non-negative integer (milliseconds), received "${raw}"`,
+    );
+  }
+
+  return Number(raw);
+}
+
+/** Validates SHUTDOWN_TIMEOUT_MS as a positive integer duration. */
+export function parseShutdownTimeoutMs(value: string | undefined): number {
+  const raw = configured(value);
+  if (raw === undefined) {
+    return DEFAULT_SHUTDOWN_TIMEOUT_MS;
+  }
+
+  if (!/^\d+$/.test(raw) || !Number.isSafeInteger(Number(raw)) || Number(raw) < 1) {
+    throw new Error(
+      `SHUTDOWN_TIMEOUT_MS must be a positive integer (milliseconds), received "${raw}"`,
     );
   }
 
