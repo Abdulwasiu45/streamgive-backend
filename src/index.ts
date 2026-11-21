@@ -84,19 +84,23 @@ export async function shutdown(signal: string): Promise<void> {
   }
 }
 
-// An unhandled promise rejection leaves the process in an unknown state just
-// like an uncaught synchronous exception — tear everything down cleanly and
-// let the orchestrator (Docker / Kubernetes / Render) restart the process.
-process.on('unhandledRejection', (reason) => {
-  app.log.error({ err: reason }, 'unhandled rejection — shutting down');
-  shutdown('unhandledRejection')
-    .catch((err) => app.log.error({ err }, 'error during shutdown'))
+function shutdownAfterFatalError(source: 'unhandledRejection' | 'uncaughtException', err: unknown) {
+  app.log.error({ err }, `${source} — shutting down`);
+  // shutdown() is bounded by SHUTDOWN_TIMEOUT_MS and rejects when cleanup
+  // stalls, so this always reaches process.exit(1).
+  shutdown(source)
+    .catch((shutdownError) => app.log.error({ err: shutdownError }, 'error during shutdown'))
     .finally(() => process.exit(1));
+}
+
+// Either fatal process error leaves the application in an unknown state.
+// Perform the same graceful teardown, bounded by SHUTDOWN_TIMEOUT_MS.
+process.on('unhandledRejection', (reason) => {
+  shutdownAfterFatalError('unhandledRejection', reason);
 });
 
 process.on('uncaughtException', (err) => {
-  app.log.error({ err }, 'uncaught exception');
-  process.exit(1);
+  shutdownAfterFatalError('uncaughtException', err);
 });
 
 app.listen({ port, host: '0.0.0.0' }).catch((err) => {

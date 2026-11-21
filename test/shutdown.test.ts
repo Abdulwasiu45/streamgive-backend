@@ -163,6 +163,7 @@ describe('uncaughtException policy', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mockApp.close.mockResolvedValue(undefined);
     // Prevent process.exit from terminating the test runner.
     exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
   });
@@ -171,14 +172,28 @@ describe('uncaughtException policy', () => {
     exitSpy.mockRestore();
   });
 
-  it('logs the error and exits with code 1 when an uncaught exception occurs', () => {
+  it('logs the error, tears down the indexer and server, then exits with code 1', async () => {
     const error = new Error('fatal synchronous crash');
     process.emit('uncaughtException', error);
 
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
     expect(mockApp.log.error).toHaveBeenCalledWith(
       expect.objectContaining({ err: error }),
-      'uncaught exception',
+      'uncaughtException — shutting down',
     );
+    expect(mockStopIndexer).toHaveBeenCalled();
+    expect(mockApp.close).toHaveBeenCalled();
+    expect(exitSpy).toHaveBeenCalledWith(1);
+  });
+
+  it('still exits with code 1 when shutdown itself errors during an uncaught exception', async () => {
+    mockApp.close.mockRejectedValue(new Error('shutdown error'));
+
+    process.emit('uncaughtException', new Error('crash'));
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
     expect(exitSpy).toHaveBeenCalledWith(1);
   });
 });
