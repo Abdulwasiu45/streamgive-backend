@@ -5,10 +5,19 @@ on:
     branches: [main]
   pull_request:
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build-test:
-    name: Lint, typecheck, test
+    name: Lint, typecheck, test (Node ${{ matrix.node-version }})
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: [20, 22]
     services:
       postgres:
         image: postgres:16
@@ -32,7 +41,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: ${{ matrix.node-version }}
           cache: npm
 
       - name: Install dependencies
@@ -51,5 +60,47 @@ jobs:
         # test database directly from schema.prisma.
         run: npx prisma db push
 
-      - name: Test
-        run: npm test
+      - name: Test and enforce coverage
+        run: npx vitest run --coverage
+
+  docker-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: streamgive
+          POSTGRES_PASSWORD: streamgive
+          POSTGRES_DB: streamgive_smoke
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U streamgive -d streamgive_smoke"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://streamgive:streamgive@127.0.0.1:5432/streamgive_smoke
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and smoke test the production image
+        run: |
+          docker build --target build -t streamgive-smoke-build .
+          docker run --rm --network host -e DATABASE_URL streamgive-smoke-build npm run db:deploy
+          docker build -t streamgive-smoke .
+          docker run -d --name streamgive-smoke --network host -e DATABASE_URL streamgive-smoke
+          for attempt in $(seq 1 30); do
+            if curl --silent --fail --max-time 2 http://127.0.0.1:3000/health; then
+              exit 0
+            fi
+            sleep 2
+          done
+          exit 1
+      - name: Collect logs and remove the container
+        if: always()
+        run: |
+          if docker inspect streamgive-smoke >/dev/null 2>&1; then
+            docker logs streamgive-smoke
+            docker rm -f streamgive-smoke
+          fi

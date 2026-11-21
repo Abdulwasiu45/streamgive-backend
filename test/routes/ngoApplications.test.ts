@@ -1,5 +1,5 @@
 import { Keypair } from '@stellar/stellar-sdk';
-import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../../src/notifications/service.js', () => ({ notify: vi.fn() }));
 
@@ -84,7 +84,7 @@ describe('POST /v1/ngo-applications', () => {
     await app.close();
   });
 
-  it('verifies the contact email with a single-use link', async () => {
+  it('does not consume the contact email token on GET and verifies only after explicit POST', async () => {
     process.env.RESEND_API_KEY = 'test-key';
     process.env.NOTIFY_EMAIL_FROM = 'verify@example.org';
     process.env.API_PUBLIC_URL = 'https://api.example.org';
@@ -109,15 +109,33 @@ describe('POST /v1/ngo-applications', () => {
     if (!token) throw new Error('verification token was missing from the link');
     expect(token).toHaveLength(43);
 
-    const verified = await app.inject({
+    const preview = await app.inject({
       method: 'GET',
+      url: `/v1/ngo-applications/verify-contact-email?token=${token}`,
+    });
+    expect(preview.statusCode).toBe(200);
+    expect(preview.headers['content-type']).toContain('text/html');
+    expect(preview.body).toContain('method="post"');
+
+    const secondPreview = await app.inject({
+      method: 'GET',
+      url: `/v1/ngo-applications/verify-contact-email?token=${token}`,
+    });
+    expect(secondPreview.statusCode).toBe(200);
+    expect(
+      (await prisma.ngoApplication.findUnique({ where: { id: response.json().id } }))
+        ?.emailVerifiedAt,
+    ).toBeNull();
+
+    const verified = await app.inject({
+      method: 'POST',
       url: `/v1/ngo-applications/verify-contact-email?token=${token}`,
     });
     expect(verified.statusCode).toBe(200);
     expect(verified.json()).toEqual({ verified: true });
 
     const reused = await app.inject({
-      method: 'GET',
+      method: 'POST',
       url: `/v1/ngo-applications/verify-contact-email?token=${token}`,
     });
     expect(reused.statusCode).toBe(400);
@@ -125,6 +143,27 @@ describe('POST /v1/ngo-applications', () => {
       (await prisma.ngoApplication.findUnique({ where: { id: response.json().id } }))
         ?.emailVerifiedAt,
     ).not.toBeNull();
+
+    await app.close();
+  });
+
+  it('sends at most one contact verification email within the application cooldown', async () => {
+    process.env.RESEND_API_KEY = 'test-key';
+    process.env.NOTIFY_EMAIL_FROM = 'verify@example.org';
+    process.env.API_PUBLIC_URL = 'https://api.example.org';
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(new Response(null, { status: 200 }));
+    const app = buildServer();
+    const application = await prisma.ngoApplication.create({ data: validApplicationPayload() });
+    const url = `/v1/ngo-applications/${application.id}/contact-email-verification`;
+
+    const first = await app.inject({ method: 'POST', url });
+    const second = await app.inject({ method: 'POST', url });
+
+    expect(first.statusCode).toBe(202);
+    expect(second.statusCode).toBe(202);
+    expect(fetchSpy).toHaveBeenCalledOnce();
 
     await app.close();
   });
@@ -354,6 +393,118 @@ describe('POST /v1/ngo-applications', () => {
     });
     expect(stored).toHaveLength(1);
     expect(stored[0].status).toBe('PENDING');
+
+    await app.close();
+  });
+});
+
+describe('POST /v1/ngo-applications/:id/contact-email-verification', () => {
+  const originalResendApiKey = process.env.RESEND_API_KEY;
+  const originalEmailFrom = process.env.NOTIFY_EMAIL_FROM;
+  const originalApiPublicUrl = process.env.API_PUBLIC_URL;
+
+  beforeEach(() => {
+    process.env.RESEND_API_KEY = 'test-key';
+    process.env.NOTIFY_EMAIL_FROM = 'verify@example.org';
+    process.env.API_PUBLIC_URL = 'https://api.example.org';
+  });
+
+  afterEach(async () => {
+    if (originalResendApiKey === undefined) delete process.env.RESEND_API_KEY;
+    else process.env.RESEND_API_KEY = originalResendApiKey;
+    if (originalEmailFrom === undefined) delete process.env.NOTIFY_EMAIL_FROM;
+    else process.env.NOTIFY_EMAIL_FROM = originalEmailFrom;
+    if (originalApiPublicUrl === undefined) delete process.env.API_PUBLIC_URL;
+    else process.env.API_PUBLIC_URL = originalApiPublicUrl;
+    vi.restoreAllMocks();
+    await resetDb();
+  });
+
+  it('answers 202 and sends nothing when the id is not a valid UUID', async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(new Response(null, { status: 200 }));
+    const app = buildServer();
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/ngo-applications/not-a-valid-uuid/contact-email-verification',
+    });
+
+    expect(response.statusCode).toBe(202);
+    expect(response.json()).toEqual({ message: 'If eligible, a verification email has been sent.' });
+    expect(fetchSpy).not.toHaveBeenCalled();
+
+    await app.close();
+  });
+
+  it('answers 202 and sends nothing when the application does not exist', async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(new Response(null, { status: 200 }));
+    const app = buildServer();
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/ngo-applications/00000000-0000-4000-8000-000000000000/contact-email-verification',
+    });
+
+    expect(response.statusCode).toBe(202);
+    expect(response.json()).toEqual({ message: 'If eligible, a verification email has been sent.' });
+    expect(fetchSpy).not.toHaveBeenCalled();
+
+    await app.close();
+  });
+
+  it('answers 202 and sends nothing when the application is already verified', async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(new Response(null, { status: 200 }));
+    const app = buildServer();
+
+    const application = await prisma.ngoApplication.create({
+      data: {
+        ...validApplicationPayload(),
+        emailVerifiedAt: new Date(),
+      },
+    });
+
+    const response = await app.inject({
+      method: 'POST',
+      url: `/v1/ngo-applications/${application.id}/contact-email-verification`,
+    });
+
+    expect(response.statusCode).toBe(202);
+    expect(response.json()).toEqual({ message: 'If eligible, a verification email has been sent.' });
+    expect(fetchSpy).not.toHaveBeenCalled();
+
+    await app.close();
+  });
+
+  it('answers 202 and sends exactly one email for an eligible unverified application', async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(new Response(null, { status: 200 }));
+    const app = buildServer();
+
+    const application = await prisma.ngoApplication.create({
+      data: {
+        ...validApplicationPayload(),
+        emailVerifiedAt: null,
+      },
+    });
+
+    const response = await app.inject({
+      method: 'POST',
+      url: `/v1/ngo-applications/${application.id}/contact-email-verification`,
+    });
+
+    expect(response.statusCode).toBe(202);
+    expect(response.json()).toEqual({ message: 'If eligible, a verification email has been sent.' });
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+
+    const email = JSON.parse(String(fetchSpy.mock.calls[0][1]?.body)) as { to: string[] };
+    expect(email.to).toEqual([application.contactEmail]);
 
     await app.close();
   });
@@ -735,7 +886,7 @@ describe('GET /v1/ngo-applications/stats', () => {
 
     expect(response.statusCode).toBe(200);
     const body = response.json();
-    expect(body.counts).toEqual({ PENDING: 2, APPROVED: 1, REJECTED: 1 });
+    expect(body.counts).toEqual({ PENDING: 2, APPROVED: 1, REJECTED: 1, WITHDRAWN: 0 });
     expect(body.total).toBe(4);
 
     await app.close();
@@ -753,7 +904,7 @@ describe('GET /v1/ngo-applications/stats', () => {
 
     expect(response.statusCode).toBe(200);
     const body = response.json();
-    expect(body.counts).toEqual({ PENDING: 0, APPROVED: 0, REJECTED: 0 });
+    expect(body.counts).toEqual({ PENDING: 0, APPROVED: 0, REJECTED: 0, WITHDRAWN: 0 });
     expect(body.total).toBe(0);
 
     await app.close();

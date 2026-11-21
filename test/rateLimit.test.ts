@@ -1,6 +1,8 @@
+import { Keypair } from '@stellar/stellar-sdk';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { buildServer, parseTrustProxy, type TrustProxySetting } from '../src/server.js';
+import { signAdminRequest } from './helpers/adminAuth.js';
 
 describe('parseTrustProxy helper', () => {
   it('defaults to true when undefined or empty', () => {
@@ -329,12 +331,18 @@ describe('trustProxy and rate limiter keying behind proxy', () => {
 describe('rate limit 429 responses', () => {
   const originalMax = process.env.RATE_LIMIT_MAX;
   const originalWindow = process.env.RATE_LIMIT_WINDOW;
+  const originalAdminAddress = process.env.ADMIN_ADDRESS;
+  const originalAdminAddresses = process.env.ADMIN_ADDRESSES;
 
   afterEach(() => {
     if (originalMax === undefined) delete process.env.RATE_LIMIT_MAX;
     else process.env.RATE_LIMIT_MAX = originalMax;
     if (originalWindow === undefined) delete process.env.RATE_LIMIT_WINDOW;
     else process.env.RATE_LIMIT_WINDOW = originalWindow;
+    if (originalAdminAddress === undefined) delete process.env.ADMIN_ADDRESS;
+    else process.env.ADMIN_ADDRESS = originalAdminAddress;
+    if (originalAdminAddresses === undefined) delete process.env.ADMIN_ADDRESSES;
+    else process.env.ADMIN_ADDRESSES = originalAdminAddresses;
   });
 
   it('includes a Retry-After header when the limit is exceeded', async () => {
@@ -372,6 +380,38 @@ describe('rate limit 429 responses', () => {
     expect(first.headers['x-ratelimit-limit']).toBe('1');
     expect(second.statusCode).toBe(429);
 
+    await app.close();
+  });
+
+  it('gives signed admins separate rate-limit budgets when sharing an IP', async () => {
+    const adminA = Keypair.random();
+    const adminB = Keypair.random();
+    process.env.ADMIN_ADDRESSES = `${adminA.publicKey()},${adminB.publicKey()}`;
+    delete process.env.ADMIN_ADDRESS;
+    process.env.RATE_LIMIT_MAX = '1';
+    process.env.RATE_LIMIT_WINDOW = '1 minute';
+
+    const app = buildServer();
+    const url = '/v1/ngo-applications';
+    const firstA = await app.inject({
+      method: 'GET',
+      url,
+      headers: signAdminRequest(adminA, 'GET', url),
+    });
+    const secondA = await app.inject({
+      method: 'GET',
+      url,
+      headers: signAdminRequest(adminA, 'GET', url),
+    });
+    const firstB = await app.inject({
+      method: 'GET',
+      url,
+      headers: signAdminRequest(adminB, 'GET', url),
+    });
+
+    expect(firstA.statusCode).toBe(200);
+    expect(secondA.statusCode).toBe(429);
+    expect(firstB.statusCode).toBe(200);
     await app.close();
   });
 });

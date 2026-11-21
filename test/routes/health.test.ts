@@ -103,6 +103,28 @@ describe('GET /health/ready', () => {
     vi.restoreAllMocks();
   });
 
+  it('uses one RPC request for probes within the ledger cache TTL', async () => {
+    vi.spyOn(prisma, '$queryRaw').mockResolvedValue([{}]);
+    const getLatestLedger = vi
+      .spyOn(rpc.rpcServer, 'getLatestLedger')
+      .mockResolvedValue(
+        { sequence: 10050 } as Awaited<ReturnType<typeof rpc.rpcServer.getLatestLedger>>,
+      );
+    vi.spyOn(await import('../../src/indexer/checkpoint.js'), 'getCheckpoint').mockResolvedValue(
+      10000,
+    );
+
+    const app = buildServer();
+    const first = await app.inject({ method: 'GET', url: '/health/ready' });
+    const second = await app.inject({ method: 'GET', url: '/health/ready' });
+
+    expect(first.statusCode).toBe(200);
+    expect(second.statusCode).toBe(200);
+    expect(getLatestLedger).toHaveBeenCalledTimes(1);
+
+    await app.close();
+  });
+
   it('responds with 200 and status ok when DB and RPC are reachable and lag is within threshold', async () => {
     vi.spyOn(prisma, '$queryRaw').mockResolvedValue([{}]);
     vi.spyOn(await import('../../src/stellar/rpc.js'), 'getLatestLedgerSequence').mockResolvedValue(

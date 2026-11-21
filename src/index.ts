@@ -3,22 +3,32 @@
 // before anything else is imported.
 import 'dotenv/config';
 
-import { parsePort } from './config.js';
+import { parseConfig } from './config.js';
+import { parsePort, parseShutdownTimeoutMs } from './config.js';
 import { dispatchEvent } from './indexer/dispatch.js';
 import { startIndexer } from './indexer/worker.js';
+import { logger } from './logger.js';
 import { startWebhookDeliveryWorker } from './notifications/webhookDeliveryWorker.js';
 import { buildServer } from './server.js';
 
 function fail(message: string): never {
-  // A single line with the variable and the bad value is easier to act on
-  // than a stack trace from inside the listen call.
-  console.error(`❌ Configuration Error: ${message}`);
+  // Print every configuration problem at once rather than a stack trace from listen().
+  logger.error({ message }, 'Configuration Error');
   process.exit(1);
 }
 
-const port = (() => {
+const config = (() => {
   try {
-    return parsePort(process.env.PORT);
+    return parseConfig(process.env);
+  } catch (err) {
+    fail(err instanceof Error ? err.message : String(err));
+  }
+})();
+
+const port = config.PORT;
+const shutdownTimeoutMs = (() => {
+  try {
+    return parseShutdownTimeoutMs(process.env.SHUTDOWN_TIMEOUT_MS);
   } catch (err) {
     fail(err instanceof Error ? err.message : String(err));
   }
@@ -37,7 +47,6 @@ const app = (() => {
 // event gets retried on the next poll instead of silently skipped.
 const stopIndexer = startIndexer(dispatchEvent);
 const stopWebhookDeliveryWorker = startWebhookDeliveryWorker();
-const FATAL_SHUTDOWN_TIMEOUT_MS = 30_000;
 
 /**
  * Tear down the indexer and HTTP server, then resolve. The caller is
@@ -47,31 +56,45 @@ const FATAL_SHUTDOWN_TIMEOUT_MS = 30_000;
  */
 export async function shutdown(signal: string): Promise<void> {
   app.log.info({ signal }, 'shutting down');
-  await stopIndexer();
-  await stopWebhookDeliveryWorker();
-  await app.close();
+  let running = 'indexer';
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  const cleanup = async () => {
+    await stopIndexer();
+    running = 'webhook delivery worker';
+    await stopWebhookDeliveryWorker();
+    running = 'HTTP server and database connections';
+    await app.close();
+  };
+
+  try {
+    await Promise.race([
+      cleanup(),
+      new Promise<never>((_, reject) => {
+        timeout = setTimeout(() => {
+          app.log.error(
+            { signal, timeoutMs: shutdownTimeoutMs, running },
+            'shutdown timed out',
+          );
+          reject(new Error(`shutdown timed out while waiting for ${running}`));
+        }, shutdownTimeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timeout !== undefined) clearTimeout(timeout);
+  }
 }
 
 function shutdownAfterFatalError(source: 'unhandledRejection' | 'uncaughtException', err: unknown) {
   app.log.error({ err }, `${source} — shutting down`);
-  const hardExitTimer = setTimeout(() => {
-    app.log.error(
-      { source, timeoutMs: FATAL_SHUTDOWN_TIMEOUT_MS },
-      'shutdown timed out; forcing exit',
-    );
-    process.exit(1);
-  }, FATAL_SHUTDOWN_TIMEOUT_MS);
-
+  // shutdown() is bounded by SHUTDOWN_TIMEOUT_MS and rejects when cleanup
+  // stalls, so this always reaches process.exit(1).
   shutdown(source)
     .catch((shutdownError) => app.log.error({ err: shutdownError }, 'error during shutdown'))
-    .finally(() => {
-      clearTimeout(hardExitTimer);
-      process.exit(1);
-    });
+    .finally(() => process.exit(1));
 }
 
 // Either fatal process error leaves the application in an unknown state.
-// Perform the same graceful teardown, with a hard exit if cleanup stalls.
+// Perform the same graceful teardown, bounded by SHUTDOWN_TIMEOUT_MS.
 process.on('unhandledRejection', (reason) => {
   shutdownAfterFatalError('unhandledRejection', reason);
 });

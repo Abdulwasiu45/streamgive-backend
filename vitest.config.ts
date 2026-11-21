@@ -10,12 +10,22 @@ const unitTests = [
   'test/requestId.test.ts',
   'test/security-headers.test.ts',
   'test/shutdown.test.ts',
+  'test/withTimeout.test.ts',
   'test/routes/serializeStream.test.ts',
+  'test/routes/escapeCsvField.test.ts',
   'test/scripts/replayDeadLetters.test.ts',
+  'test/scripts/rebuildStreams.test.ts',
 ];
 
 export default defineConfig({
   test: {
+    coverage: {
+      provider: 'v8',
+      include: ['src/**/*.ts'],
+      exclude: ['src/generated/**'],
+      reporter: ['text-summary'],
+      thresholds: { lines: 25, statements: 25, functions: 20, branches: 15 },
+    },
     projects: [
       {
         extends: true,

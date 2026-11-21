@@ -14,13 +14,15 @@ import type { ContractEvent } from '../worker.js';
  * transaction, then emits an `ngo_registered` notification.
  *
  * `approved` — emitted when an admin approves a previously-registered NGO.
- * Writes: sets `verified: true` on the matching `ngo` row via `updateMany`
+ * Writes: sets `verified: true` and `verifiedAt` (the ledger close time) on
+ * the matching `ngo` row via `updateMany`
  * (not `update`, so a stray `approved` seen without a prior `register` —
  * e.g. the indexer started mid-history — doesn't throw). Persists a
  * `StreamEvent` row in the same transaction.
  *
  * `revoked` — emitted when an admin revokes a previously-approved NGO.
- * Writes: sets `verified: false` on the matching `ngo` row via `updateMany`.
+ * Writes: sets `verified: false` and clears `verifiedAt` on the matching
+ * `ngo` row via `updateMany`.
  *
  * All three ultimately mutate the same `ngos` row — `register` creates it
  * unverified, `approved` flips it to verified, and `revoked` flips it back to
@@ -63,7 +65,7 @@ export async function handleNgoRegistryEvent(event: ContractEvent): Promise<void
     await prisma.$transaction(async (tx) => {
       await tx.ngo.updateMany({
         where: { ownerAddress },
-        data: { verified: true },
+        data: { verified: true, verifiedAt: new Date(event.ledgerClosedAt) },
       });
 
       await tx.streamEvent.create({
@@ -88,7 +90,7 @@ export async function handleNgoRegistryEvent(event: ContractEvent): Promise<void
     await prisma.$transaction(async (tx) => {
       await tx.ngo.updateMany({
         where: { ownerAddress },
-        data: { verified: false },
+        data: { verified: false, verifiedAt: null },
       });
 
       await tx.streamEvent.create({

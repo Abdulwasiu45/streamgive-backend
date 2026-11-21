@@ -9,14 +9,9 @@ import Fastify from 'fastify';
 import type { FastifyError, FastifyReply } from 'fastify';
 import packageJson from '../package.json' with { type: 'json' };
 
-import {
-  parseHealthCheckTimeoutMs,
-  parseRateLimitMax,
-  parseRateLimitWindow,
-  parseSlowRequestThresholdMs,
-} from './config.js';
+import { MAINTENANCE_RETRY_AFTER_SECONDS, parseConfig } from './config.js';
 import { prisma } from './db.js';
-import { requireAdminSignature } from './middleware/adminAuth.js';
+import { configuredAdminAddresses, requireAdminSignature } from './middleware/adminAuth.js';
 import { recordHttpRequest, renderMetrics } from './metrics.js';
 import { getCheckpoint } from './indexer/checkpoint.js';
 import { donorRoutes } from './routes/donors.js';
@@ -25,8 +20,10 @@ import { indexerStatusRoutes } from './routes/indexerStatus.js';
 import { getLatestLedgerSequence } from './stellar/rpc.js';
 import { ngoApplicationRoutes } from './routes/ngoApplications.js';
 import { ngoRoutes } from './routes/ngos.js';
+import { getBuildVersionInfo } from './version.js';
 import { deadLetterRoutes } from './routes/deadLetters.js';
 import { notificationEndpointRoutes } from './routes/notificationEndpoints.js';
+import { notificationLogRoutes } from './routes/notificationLogs.js';
 import { streamRoutes } from './routes/streams.js';
 import { tokenRoutes } from './routes/tokens.js';
 import { registerRequestIdHeader, requestIdOptions } from './requestId.js';
@@ -107,41 +104,47 @@ export interface BuildServerOptions {
   trustProxy?: TrustProxySetting;
 }
 
-const DEFAULT_BODY_LIMIT_BYTES = 1_048_576;
-
-function configuredBodyLimit(): number {
-  const value = process.env.BODY_LIMIT_BYTES;
-  if (value === undefined || value.trim() === '') return DEFAULT_BODY_LIMIT_BYTES;
-  if (!/^\d+$/.test(value)) {
-    throw new Error('BODY_LIMIT_BYTES must be a positive integer.');
-  }
-  const parsed = Number(value);
-  if (!Number.isSafeInteger(parsed) || parsed < 1) {
-    throw new Error('BODY_LIMIT_BYTES must be a positive integer.');
-  }
-  return parsed;
+/**
+ * Races a promise against a timeout.  Rejects with a TimeoutError when the
+ * deadline is reached so callers can treat it the same as any other failure.
+ */
+export function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(
+      () => reject(new Error(`health check timed out after ${ms} ms`)),
+      ms,
+    );
+    promise.then(
+      (v) => {
+        clearTimeout(timer);
+        resolve(v);
+      },
+      (e) => {
+        clearTimeout(timer);
+        reject(e);
+      },
+    );
+  });
 }
 
 export function buildServer(options?: BuildServerOptions) {
   const requestStartedAt = new WeakMap<object, bigint>();
-  const bodyLimit = configuredBodyLimit();
-  // Parsed once per server build: an invalid value fails startup here with a
-  // message that names the variable, instead of surfacing as NaN or a plugin
-  // error on the first throttled request.
-  const rateLimitMax = parseRateLimitMax(process.env.RATE_LIMIT_MAX);
-  const rateLimitWindow = parseRateLimitWindow(process.env.RATE_LIMIT_WINDOW);
-  const slowRequestThresholdMs = parseSlowRequestThresholdMs(process.env.SLOW_REQUEST_THRESHOLD_MS);
-  const healthCheckTimeoutMs = parseHealthCheckTimeoutMs(process.env.HEALTH_CHECK_TIMEOUT_MS);
+  const cfg = parseConfig(process.env);
+  const bodyLimit = cfg.BODY_LIMIT_BYTES;
+  const rateLimitMax = cfg.RATE_LIMIT_MAX;
+  const rateLimitWindow = cfg.RATE_LIMIT_WINDOW;
+  const slowRequestThresholdMs = cfg.SLOW_REQUEST_THRESHOLD_MS;
+  const maintenanceMode = cfg.MAINTENANCE_MODE;
   const trustProxySetting =
     options?.trustProxy !== undefined
       ? options.trustProxy
-      : parseTrustProxy(process.env.TRUST_PROXY);
+      : parseTrustProxy(cfg.TRUST_PROXY);
 
   const app = Fastify({
     ...requestIdOptions,
     bodyLimit,
     logger: {
-      level: process.env.LOG_LEVEL ?? 'info',
+      level: cfg.LOG_LEVEL,
       // Structured JSON otherwise (production: for log aggregation; test:
       // to avoid the worker-thread overhead above) — pino-pretty is a
       // devDependency on purpose, since the production image never needs it.
@@ -245,10 +248,7 @@ export function buildServer(options?: BuildServerOptions) {
   // Allowed origins are an explicit list, not a wildcard: the admin routes
   // authenticate with a signature the browser sends as a header, so any
   // origin allowed here can ask a signed-in admin's browser to call them.
-  const allowedOrigins = (process.env.CORS_ORIGINS ?? 'http://localhost:3001')
-    .split(',')
-    .map((origin) => origin.trim())
-    .filter((origin) => origin.length > 0);
+  const allowedOrigins = cfg.CORS_ORIGINS;
 
   app.register(cors, {
     origin: allowedOrigins,
@@ -277,6 +277,17 @@ export function buildServer(options?: BuildServerOptions) {
     global: true,
     max: rateLimitMax,
     timeWindow: rateLimitWindow,
+    keyGenerator: (request) => {
+      const address = request.headers['x-admin-address'];
+      if (
+        request.routeOptions.config.adminRateLimit === true &&
+        typeof address === 'string' &&
+        configuredAdminAddresses().includes(address)
+      ) {
+        return `admin:${address}`;
+      }
+      return request.ip;
+    },
     // Spell the headers out instead of leaning on the plugin's defaults:
     // `Retry-After` is the machine-readable contract clients back off on
     // (RFC 9110 §10.2.3), and the `x-ratelimit-*` headers let a client see
@@ -290,6 +301,21 @@ export function buildServer(options?: BuildServerOptions) {
   });
 
   app.log.info({ max: rateLimitMax, timeWindow: rateLimitWindow }, 'global rate limit configured');
+
+  // Maintenance mode stops writes during a migration or RPC incident while
+  // reads, health checks and CORS preflights keep working.
+  if (maintenanceMode) {
+    app.log.warn('maintenance mode is on: write requests answer 503');
+    const readMethods = new Set(['GET', 'HEAD', 'OPTIONS']);
+    app.addHook('onRequest', async (request, reply) => {
+      if (!readMethods.has(request.method)) {
+        return reply
+          .code(503)
+          .header('retry-after', String(MAINTENANCE_RETRY_AFTER_SECONDS))
+          .send({ error: 'maintenance' });
+      }
+    });
+  }
 
   // Root routes are declared before the limiter plugin's global onRoute hook runs.
   const rootRateLimitedRoutes = new Set(['/metrics', '/health', '/health/ready']);
@@ -391,22 +417,7 @@ export function buildServer(options?: BuildServerOptions) {
     });
   }
 
-  /**
-   * Races a promise against a timeout.  Rejects with a TimeoutError when the
-   * deadline is reached so callers can treat it the same as any other failure.
-   */
-  function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
-    return new Promise<T>((resolve, reject) => {
-      const timer = setTimeout(
-        () => reject(new Error(`health check timed out after ${ms} ms`)),
-        ms,
-      );
-      promise.then(
-        (v) => { clearTimeout(timer); resolve(v); },
-        (e) => { clearTimeout(timer); reject(e); },
-      );
-    });
-  }
+  const HEALTH_CHECK_TIMEOUT_MS = cfg.HEALTH_CHECK_TIMEOUT_MS;
 
   /**
    * Liveness probe — checks the database is reachable and returns the minimal
@@ -418,7 +429,7 @@ export function buildServer(options?: BuildServerOptions) {
    */
   const healthHandler = async (_req: unknown, reply: FastifyReply) => {
     const dbResult = await Promise.allSettled([
-      withTimeout(prisma.$queryRaw`SELECT 1`, healthCheckTimeoutMs),
+      withTimeout(prisma.$queryRaw`SELECT 1`, HEALTH_CHECK_TIMEOUT_MS),
     ]);
 
     const db = dbResult[0].status === 'fulfilled' ? 'ok' : 'error';
@@ -441,11 +452,11 @@ export function buildServer(options?: BuildServerOptions) {
   app.get('/health/ready', async (request, reply) => {
     try {
       // 1. Check DB (time-boxed)
-      await withTimeout(prisma.$queryRaw`SELECT 1`, healthCheckTimeoutMs);
+      await withTimeout(prisma.$queryRaw`SELECT 1`, HEALTH_CHECK_TIMEOUT_MS);
 
       // 2. Get RPC and Indexer info (both time-boxed)
       const [latestLedger, checkpointLedger] = await Promise.all([
-        withTimeout(getLatestLedgerSequence(), healthCheckTimeoutMs),
+        withTimeout(getLatestLedgerSequence(), HEALTH_CHECK_TIMEOUT_MS),
         getCheckpoint(),
       ]);
 
@@ -468,6 +479,35 @@ export function buildServer(options?: BuildServerOptions) {
     }
   });
 
+  /**
+   * Returns build metadata (package version, git commit, and build time) with no secrets.
+   * @route GET /version
+   * @auth Public
+   */
+  app.register(async (versionRoutes) => {
+    versionRoutes.get(
+      '/version',
+      {
+        schema: {
+          tags: ['System'],
+          summary: 'Get build version and commit metadata',
+          response: {
+            200: {
+              type: 'object',
+              properties: {
+                version: { type: 'string' },
+                commit: { type: 'string' },
+                buildTime: { type: 'string', nullable: true },
+              },
+              required: ['version', 'commit', 'buildTime'],
+            },
+          },
+        },
+      },
+      async () => getBuildVersionInfo(),
+    );
+  });
+
   app.addHook('onRoute', (route) => {
     const preHandlers = Array.isArray(route.preHandler)
       ? route.preHandler
@@ -475,6 +515,7 @@ export function buildServer(options?: BuildServerOptions) {
         ? [route.preHandler]
         : [];
     if (preHandlers.includes(requireAdminSignature)) {
+      route.config = { ...route.config, adminRateLimit: true };
       route.schema = {
         ...route.schema,
         security: [
@@ -497,6 +538,19 @@ export function buildServer(options?: BuildServerOptions) {
             limit: { type: 'integer', minimum: 1, maximum: 100, default: 100 },
             cursor: { type: 'string', format: 'uuid' },
             sort: { type: 'string', enum: ['newest', 'oldest', 'name'], default: 'newest' },
+            q: { type: 'string', maxLength: 100 },
+          },
+        },
+      },
+      '/v1/ngos/all': {
+        tags: ['NGOs'],
+        summary: 'List all NGOs for admin review',
+        querystring: {
+          type: 'object',
+          properties: {
+            limit: { type: 'integer', minimum: 1, maximum: 100, default: 100 },
+            cursor: { type: 'string', format: 'uuid' },
+            verified: { type: 'string', enum: ['true', 'false'] },
             q: { type: 'string', maxLength: 100 },
           },
         },
@@ -535,6 +589,15 @@ export function buildServer(options?: BuildServerOptions) {
           required: ['id'],
         },
       },
+      '/v1/donors/:address/ngos': {
+        tags: ['Donors'],
+        summary: 'List distinct NGOs supported by a donor with token-grouped totals',
+        params: {
+          type: 'object',
+          properties: { address: { type: 'string', pattern: '^G[A-Z2-7]{55}$' } },
+          required: ['address'],
+        },
+      },
     };
     const schema = schemas[route.url];
     if (schema) route.schema = { ...route.schema, ...schema };
@@ -550,6 +613,7 @@ export function buildServer(options?: BuildServerOptions) {
   app.register(indexerStatusRoutes, apiPrefix);
   app.register(deadLetterRoutes, apiPrefix);
   app.register(notificationEndpointRoutes, apiPrefix);
+  app.register(notificationLogRoutes, apiPrefix);
   registerLogRetention(app);
 
   return app;

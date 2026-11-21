@@ -1,3 +1,5 @@
+import { Readable } from 'node:stream';
+
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 
@@ -22,6 +24,26 @@ const querySchema = z.object({
 const addressParamSchema = z.object({
   address: z.string().regex(/^G[A-Z2-7]{55}$/),
 });
+const STREAMS_CSV_BATCH_SIZE = 500;
+
+/**
+ * Helper to escape a value for CSV with RFC 4180 rules and formula injection protection.
+ */
+export function escapeCsvField(value: unknown): string {
+  if (value === null || value === undefined) {
+    return '';
+  }
+  let str = String(value);
+  // Formula-safe: if string starts with dangerous characters, prefix with single quote
+  if (/^[=+\-@\t\r]/.test(str)) {
+    str = `'${str}`;
+  }
+  // If field contains quotes, commas, or newlines, wrap in quotes and escape internal quotes
+  if (str.includes('"') || str.includes(',') || str.includes('\n') || str.includes('\r')) {
+    return `"${str.replace(/"/g, '""')}"`;
+  }
+  return str;
+}
 
 export async function donorRoutes(app: FastifyInstance): Promise<void> {
   /**
@@ -152,23 +174,104 @@ export async function donorRoutes(app: FastifyInstance): Promise<void> {
   });
 
   /**
-   * Helper to escape a value for CSV with RFC 4180 rules and formula injection protection.
+   * Lists the distinct NGOs a donor supports, with stream counts and committed/withdrawn
+   * totals grouped by token.
+   * @route GET /v1/donors/:address/ngos
+   * @param address Stellar public key
+   * @auth Public
+   * @returns 200 `{ ngos: DonorNgoSummary[] }`; 400 invalid address; 404 `{ error: "not_found" }`.
    */
-  function escapeCsvField(value: unknown): string {
-    if (value === null || value === undefined) {
-      return '';
+  app.get('/donors/:address/ngos', async (request, reply) => {
+    const parsedParams = addressParamSchema.safeParse(request.params);
+    if (!parsedParams.success) {
+      return reply.code(400).send({ error: 'invalid_request' });
     }
-    let str = String(value);
-    // Formula-safe: if string starts with dangerous characters, prefix with single quote
-    if (/^[=+\-@\t\r]/.test(str)) {
-      str = `'${str}`;
+
+    const donor = await prisma.donor.findUnique({
+      where: { address: parsedParams.data.address },
+      include: {
+        streams: {
+          include: {
+            ngo: {
+              select: {
+                id: true,
+                name: true,
+                displayName: true,
+                ownerAddress: true,
+                verified: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    if (!donor) {
+      return reply.code(404).send({ error: 'not_found' });
     }
-    // If field contains quotes, commas, or newlines, wrap in quotes and escape internal quotes
-    if (str.includes('"') || str.includes(',') || str.includes('\n') || str.includes('\r')) {
-      return `"${str.replace(/"/g, '""')}"`;
+
+    const byNgo = new Map<
+      string,
+      {
+        ngoId: string;
+        name: string | null;
+        displayName: string | null;
+        ownerAddress: string;
+        verified: boolean;
+        streamCount: number;
+        activeStreamCount: number;
+        tokens: Map<string, { committed: bigint; withdrawn: bigint }>;
+      }
+    >();
+
+    for (const stream of donor.streams) {
+      let entry = byNgo.get(stream.ngoId);
+      if (!entry) {
+        entry = {
+          ngoId: stream.ngo.id,
+          name: stream.ngo.name,
+          displayName: stream.ngo.displayName,
+          ownerAddress: stream.ngo.ownerAddress,
+          verified: stream.ngo.verified,
+          streamCount: 0,
+          activeStreamCount: 0,
+          tokens: new Map(),
+        };
+        byNgo.set(stream.ngoId, entry);
+      }
+
+      entry.streamCount += 1;
+      if (stream.status === 'ACTIVE') {
+        entry.activeStreamCount += 1;
+      }
+
+      const committed =
+        stream.status === 'CANCELLED'
+          ? BigInt(stream.withdrawn)
+          : BigInt(stream.balance) + BigInt(stream.withdrawn);
+      const withdrawn = BigInt(stream.withdrawn);
+      const existing = entry.tokens.get(stream.tokenAddress) ?? { committed: 0n, withdrawn: 0n };
+      entry.tokens.set(stream.tokenAddress, {
+        committed: existing.committed + committed,
+        withdrawn: existing.withdrawn + withdrawn,
+      });
     }
-    return str;
-  }
+
+    const ngos = [...byNgo.values()]
+      .map(({ tokens, ...ngo }) => ({
+        ...ngo,
+        totalsByToken: [...tokens.entries()]
+          .sort(([left], [right]) => left.localeCompare(right))
+          .map(([tokenAddress, totals]) => ({
+            tokenAddress,
+            committed: totals.committed.toString(),
+            withdrawn: totals.withdrawn.toString(),
+          })),
+      }))
+      .sort((left, right) => left.ngoId.localeCompare(right.ngoId));
+
+    return sendPublicCacheable(request, reply, { ngos });
+  });
 
   /**
    * Exports all streams for a donor as a CSV file with formula-safe fields.
@@ -191,14 +294,6 @@ export async function donorRoutes(app: FastifyInstance): Promise<void> {
       return reply.code(404).send({ error: 'not_found' });
     }
 
-    const streams = await prisma.stream.findMany({
-      where: { donorId: donor.id },
-      orderBy: { createdAt: 'desc' },
-      include: {
-        ngo: { select: { id: true, name: true, displayName: true, ownerAddress: true } },
-      },
-    });
-
     const headers = [
       'id',
       'onChainId',
@@ -216,37 +311,58 @@ export async function donorRoutes(app: FastifyInstance): Promise<void> {
       'updatedAt',
     ];
 
-    const rows = streams.map((stream) => {
-      const ngoName = stream.ngo.displayName || stream.ngo.name || '';
-      return [
-        stream.id,
-        stream.onChainId.toString(),
-        stream.ngoId,
-        ngoName,
-        stream.ngo.ownerAddress,
-        stream.tokenAddress,
-        stream.rate,
-        stream.lastRate ?? '',
-        stream.balance,
-        stream.withdrawn,
-        stream.status,
-        stream.createdTxHash ?? '',
-        stream.createdAt.toISOString(),
-        stream.updatedAt.toISOString(),
-      ];
-    });
-
-    const csvContent = [
-      headers.map(escapeCsvField).join(','),
-      ...rows.map((row) => row.map(escapeCsvField).join(',')),
-    ].join('\r\n');
-
     reply.header('content-type', 'text/csv; charset=utf-8');
     reply.header(
       'content-disposition',
       `attachment; filename="donor-${parsedParams.data.address}-streams.csv"`,
     );
 
-    return reply.send(csvContent ? `${csvContent}\r\n` : '');
+    const csv = Readable.from(
+      (async function* () {
+        yield `${headers.map(escapeCsvField).join(',')}\r\n`;
+        let cursor: string | undefined;
+
+        while (true) {
+          const streams = await prisma.stream.findMany({
+            where: { donorId: donor.id },
+            orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+            take: STREAMS_CSV_BATCH_SIZE,
+            ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+            include: {
+              ngo: { select: { id: true, name: true, displayName: true, ownerAddress: true } },
+            },
+          });
+
+          if (streams.length === 0) break;
+
+          for (const stream of streams) {
+            const ngoName = stream.ngo.displayName || stream.ngo.name || '';
+            const row = [
+              stream.id,
+              stream.onChainId.toString(),
+              stream.ngoId,
+              ngoName,
+              stream.ngo.ownerAddress,
+              stream.tokenAddress,
+              stream.rate,
+              stream.lastRate ?? '',
+              stream.balance,
+              stream.withdrawn,
+              stream.status,
+              stream.createdTxHash ?? '',
+              stream.createdAt.toISOString(),
+              stream.updatedAt.toISOString(),
+            ];
+            yield `${row.map(escapeCsvField).join(',')}\r\n`;
+          }
+
+          const lastStream = streams.at(-1);
+          if (!lastStream || streams.length < STREAMS_CSV_BATCH_SIZE) break;
+          cursor = lastStream.id;
+        }
+      })(),
+    );
+
+    return reply.send(csv);
   });
 }

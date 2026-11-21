@@ -1,8 +1,10 @@
 import { createHash, randomBytes } from 'node:crypto';
 
 import { prisma } from '../db.js';
+import { logger } from '../logger.js';
 
 const CONTACT_EMAIL_TOKEN_TTL_MS = 24 * 60 * 60 * 1000;
+const CONTACT_EMAIL_RESEND_COOLDOWN_MS = 5 * 60 * 1000;
 
 function hashToken(token: string): string {
   return createHash('sha256').update(token).digest('hex');
@@ -17,7 +19,7 @@ export async function sendContactVerification(application: {
   const from = process.env.NOTIFY_EMAIL_FROM;
   const publicApiUrl = process.env.API_PUBLIC_URL;
   if (!apiKey || !from || !publicApiUrl) {
-    console.warn('contact email verification is not configured');
+    logger.warn('contact email verification is not configured');
     return false;
   }
 
@@ -25,13 +27,31 @@ export async function sendContactVerification(application: {
   try {
     baseUrl = new URL(publicApiUrl);
   } catch {
-    console.error('API_PUBLIC_URL must be an absolute URL');
+    logger.error('API_PUBLIC_URL must be an absolute URL');
     return false;
   }
   if (baseUrl.protocol !== 'https:' && baseUrl.hostname !== 'localhost') {
-    console.error('API_PUBLIC_URL must use HTTPS');
+    logger.error('API_PUBLIC_URL must use HTTPS');
     return false;
   }
+
+  const sentAt = new Date();
+  const reservation = await prisma.ngoApplication.updateMany({
+    where: {
+      id: application.id,
+      emailVerifiedAt: null,
+      OR: [
+        { lastContactVerificationSentAt: null },
+        {
+          lastContactVerificationSentAt: {
+            lt: new Date(sentAt.getTime() - CONTACT_EMAIL_RESEND_COOLDOWN_MS),
+          },
+        },
+      ],
+    },
+    data: { lastContactVerificationSentAt: sentAt },
+  });
+  if (reservation.count !== 1) return false;
 
   const token = randomBytes(32).toString('base64url');
   const expiresAt = new Date(Date.now() + CONTACT_EMAIL_TOKEN_TTL_MS);
@@ -45,8 +65,8 @@ export async function sendContactVerification(application: {
       },
       update: { tokenHash: hashToken(token), expiresAt },
     });
-  } catch {
-    console.error('failed to store contact verification challenge');
+  } catch (error) {
+    logger.error({ err: error }, 'failed to store contact verification challenge');
     return false;
   }
 
@@ -67,12 +87,15 @@ export async function sendContactVerification(application: {
       }),
     });
     if (!response.ok) {
-      console.error(`contact verification email was rejected (status ${response.status})`);
+      logger.error(
+        { status: response.status },
+        'contact verification email was rejected',
+      );
       return false;
     }
     return true;
-  } catch {
-    console.error('failed to send contact verification email');
+  } catch (error) {
+    logger.error({ err: error }, 'failed to send contact verification email');
     return false;
   }
 }

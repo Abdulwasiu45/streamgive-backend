@@ -174,6 +174,9 @@ export async function deadLetterRoutes(app: FastifyInstance): Promise<void> {
     '/admin/dead-letters/:id/resolve',
     {
       preHandler: requireAdminSignature,
+      preValidation: async (request) => {
+        request.body ??= {};
+      },
       schema: {
         tags: ['Admin'],
         summary: 'Resolve a dead-lettered event',

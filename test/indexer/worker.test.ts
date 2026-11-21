@@ -4,6 +4,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vites
 import { prisma } from '../../src/db.js';
 import { getCheckpoint, saveCheckpoint } from '../../src/indexer/checkpoint.js';
 import { rebuildEventFromDeadLetter } from '../../src/indexer/deadLetter.js';
+import { logger } from '../../src/logger.js';
 import type { ContractEvent } from '../../src/indexer/worker.js';
 import { fakeAddress, resetDb } from '../helpers/db.js';
 import { addressScVal, i128ScVal, makeEvent, symbolScVal, u64ScVal } from '../helpers/events.js';
@@ -24,6 +25,7 @@ const mocks = vi.hoisted(() => {
     getLatestLedgerSequence: vi.fn(),
     getCheckpointState: vi.fn(),
     saveCheckpoint: vi.fn(),
+    tryAcquireIndexerLock: vi.fn(),
     // Memoised here, in a closure the module registry reset below does not
     // touch, so every re-import shares one PrismaClient (and one connection
     // pool) instead of opening a fresh one per case.
@@ -59,6 +61,17 @@ vi.mock('../../src/indexer/checkpoint.js', async () => {
     saveCheckpoint: mocks.saveCheckpoint,
   };
 });
+
+vi.mock('../../src/indexer/lock.js', () => ({
+  tryAcquireIndexerLock: mocks.tryAcquireIndexerLock,
+}));
+
+function acquiredIndexerLock() {
+  return {
+    isHeld: () => true,
+    release: async () => {},
+  };
+}
 
 /**
  * `pollOnce` caches its checkpoint in a module-level variable for the life of
@@ -107,10 +120,8 @@ describe('pollOnce', () => {
   beforeEach(() => {
     mocks.getEvents.mockReset();
     mocks.getLatestLedgerSequence.mockReset();
-    // The dead-letter path logs through console.error and the email
-    // notification stub through console.log; neither is under test here.
-    vi.spyOn(console, 'error').mockImplementation(() => {});
-    vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(logger, 'error').mockImplementation(() => {});
+    vi.spyOn(logger, 'info').mockImplementation(() => {});
   });
 
   afterEach(async () => {
@@ -352,13 +363,14 @@ describe('backoff on RPC failures (#115)', () => {
     // implementations in place, so a mockRejectedValue from one test would
     // otherwise leak into the next one. Each test below sets its own.
     vi.mocked(mocks.getLatestLedgerSequence).mockReset();
+    mocks.tryAcquireIndexerLock.mockResolvedValue(acquiredIndexerLock());
     // These cases assert the delay schedule, not what lands in the database,
     // and the checkpoint write on a successful poll would otherwise need a live
     // Postgres. Stub both; the pollOnce cases above keep the real pair.
     mocks.getCheckpointState.mockResolvedValue({ lastLedger: 100 });
     mocks.saveCheckpoint.mockResolvedValue(undefined);
     // Every test here drives the failure path, which logs on purpose.
-    vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.spyOn(logger, 'error').mockImplementation(() => {});
   });
 
   it('does not overlap polls when an RPC request takes longer than the interval', async () => {
@@ -557,6 +569,7 @@ describe('startIndexer stop behavior', () => {
   it('stops polling after the stop function is called', async () => {
     process.env.DONATION_VAULT_CONTRACT_ID = mocks.contractId;
     process.env.INDEXER_POLL_INTERVAL_MS = '5000';
+    mocks.tryAcquireIndexerLock.mockResolvedValue(acquiredIndexerLock());
     vi.useFakeTimers();
 
     mocks.getCheckpointState.mockResolvedValue({ lastLedger: 100 });
@@ -574,14 +587,34 @@ describe('startIndexer stop behavior', () => {
     expect(mocks.getLatestLedgerSequence.mock.calls.length).toBe(callsBeforeStop);
   });
 
-  it('keeps a second worker idle until the first worker releases the advisory lock', async () => {
+  it('keeps a second worker idle until the first worker releases the indexer lock', async () => {
     process.env.DONATION_VAULT_CONTRACT_ID = mocks.contractId;
     process.env.INDEXER_POLL_INTERVAL_MS = '10000';
+    let lockHeld = false;
+    let releaseSecondPoll!: () => void;
+    const secondPollBlocked = new Promise<void>((resolve) => {
+      releaseSecondPoll = resolve;
+    });
+    let eventFetches = 0;
+    mocks.tryAcquireIndexerLock.mockImplementation(async () => {
+      if (lockHeld) return null;
+      lockHeld = true;
+      return {
+        isHeld: () => lockHeld,
+        release: async () => {
+          lockHeld = false;
+        },
+      };
+    });
     mocks.getLatestLedgerSequence.mockClear();
     mocks.getEvents.mockClear();
     mocks.getCheckpointState.mockResolvedValue({ lastLedger: 100 });
-    mocks.getLatestLedgerSequence.mockResolvedValue(100);
-    mocks.getEvents.mockResolvedValue({ events: [], latestLedger: 100 });
+    mocks.getLatestLedgerSequence.mockResolvedValue(101);
+    mocks.getEvents.mockImplementation(async () => {
+      eventFetches += 1;
+      if (eventFetches === 2) await secondPollBlocked;
+      return { events: [], latestLedger: 101 };
+    });
 
     let stopFirst: (() => Promise<void>) | undefined;
     let stopSecond: (() => Promise<void>) | undefined;
@@ -594,7 +627,8 @@ describe('startIndexer stop behavior', () => {
 
       process.env.INDEXER_POLL_INTERVAL_MS = '25';
       const secondWorker = await freshIndexer();
-      stopSecond = secondWorker.startIndexer(async () => {});
+      const stopSecondWorker = secondWorker.startIndexer(async () => {});
+      stopSecond = stopSecondWorker;
       await new Promise((resolve) => setTimeout(resolve, 75));
       expect(mocks.getLatestLedgerSequence).toHaveBeenCalledTimes(1);
 
@@ -604,6 +638,10 @@ describe('startIndexer stop behavior', () => {
       await vi.waitFor(() => {
         expect(mocks.getLatestLedgerSequence).toHaveBeenCalledTimes(2);
       });
+      const stoppingSecond = stopSecondWorker();
+      releaseSecondPoll();
+      await stoppingSecond;
+      stopSecond = undefined;
     } finally {
       await stopSecond?.();
       await stopFirst?.();
@@ -612,29 +650,30 @@ describe('startIndexer stop behavior', () => {
 
   it('recovers when the checkpoint is outside the RPC retention window', async () => {
     process.env.DONATION_VAULT_CONTRACT_ID = mocks.contractId;
-    vi.spyOn(console, 'warn').mockImplementation(() => {});
 
-    mocks.getCheckpointState.mockResolvedValue({
-      lastLedger: 500,
-      lastEventId: undefined,
-    });
-    mocks.getLatestLedgerSequence.mockResolvedValue(10000);
-    mocks.getEvents.mockRejectedValueOnce({
-      message: 'startLedger must be within the ledger range [9000, 10000]',
-    });
-    mocks.saveCheckpoint.mockResolvedValue(undefined);
+    mocks.getCheckpointState
+      .mockReset()
+      .mockResolvedValue({ lastLedger: 500, lastEventId: undefined });
+    mocks.getLatestLedgerSequence.mockReset().mockResolvedValue(10000);
+    mocks.getEvents
+      .mockReset()
+      .mockRejectedValueOnce({
+        message: 'startLedger must be within the ledger range [9000, 10000]',
+      });
+    mocks.saveCheckpoint.mockReset().mockResolvedValue(undefined);
 
     const { pollOnce } = await freshIndexer();
+    const { logger: workerLogger } = await import('../../src/logger.js');
+    const loggerWarnSpy = vi.spyOn(workerLogger, 'warn').mockImplementation(() => {});
     const handler = vi.fn();
-    
+
     await pollOnce(handler);
 
-    expect(console.warn).toHaveBeenCalledWith(
-      expect.stringContaining('checkpoint 500 has aged out'),
+    expect(loggerWarnSpy).toHaveBeenCalledWith(
+      { checkpointLedger: 500, latestLedger: 10000 },
+      expect.stringContaining('checkpoint has aged out'),
     );
     expect(mocks.saveCheckpoint).toHaveBeenCalledWith(10000);
     expect(handler).not.toHaveBeenCalled();
-
-    vi.mocked(console.warn).mockRestore();
   });
 });
