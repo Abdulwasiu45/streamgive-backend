@@ -70,3 +70,14 @@ npm test
 
 All three must pass with no errors. Then open a PR against `main` and link the
 relevant issue.
+
+
+---
+
+## Dependency Audit Triage
+
+The `Dependency Audit` workflow runs `npm audit --omit=dev --audit-level=high` weekly and whenever `package.json` or `package-lock.json` changes. If the job fails:
+
+1. Run `npm audit --omit=dev` locally to inspect the advisory ID, affected package path, and patched version range.
+2. Run `npm audit fix --omit=dev` (or update the direct dependency in `package.json`) if a non-breaking patch is available, then run `npm run lint`, `npm run typecheck`, and `npm test`.
+3. If the advisory requires a major upgrade or has no upstream fix yet, verify whether the vulnerable code path is reachable in production, open a tracking issue with the GHSA link, and coordinate the upgrade or mitigation in a dedicated PR.
