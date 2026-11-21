@@ -36,10 +36,10 @@ jobs:
       DATABASE_URL: postgresql://streamgive:streamgive@localhost:5432/streamgive_test
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
         with:
           node-version: ${{ matrix.node-version }}
           cache: npm
@@ -53,12 +53,8 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
-      - name: Sync test database schema
-        # db push, not migrate deploy: no migration files exist yet (no
-        # local Postgres has been available to generate them from), and
-        # db push is the officially recommended way to sync an ephemeral
-        # test database directly from schema.prisma.
-        run: npx prisma db push
+      - name: Apply migrations
+        run: npx prisma migrate deploy
 
       - name: Test and enforce coverage
         run: npx vitest run --coverage
@@ -83,7 +79,7 @@ jobs:
     env:
       DATABASE_URL: postgresql://streamgive:streamgive@127.0.0.1:5432/streamgive_smoke
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - name: Build and smoke test the production image
         run: |
           docker build --target build -t streamgive-smoke-build .
