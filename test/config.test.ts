@@ -5,11 +5,32 @@ import {
   DEFAULT_RATE_LIMIT_MAX,
   DEFAULT_RATE_LIMIT_WINDOW,
   DEFAULT_SHUTDOWN_TIMEOUT_MS,
+  parseMaintenanceMode,
   parsePort,
   parseRateLimitMax,
   parseRateLimitWindow,
   parseShutdownTimeoutMs,
 } from '../src/config.js';
+
+describe('parseMaintenanceMode', () => {
+  it('is off when unset or false', () => {
+    for (const value of [undefined, '', '  ', 'false', 'FALSE', '0']) {
+      expect(parseMaintenanceMode(value)).toBe(false);
+    }
+  });
+
+  it('is on for true or 1', () => {
+    for (const value of ['true', ' True ', '1']) {
+      expect(parseMaintenanceMode(value)).toBe(true);
+    }
+  });
+
+  it('rejects anything else', () => {
+    for (const value of ['yes', 'on', '2', 'tru']) {
+      expect(() => parseMaintenanceMode(value)).toThrow(/MAINTENANCE_MODE/);
+    }
+  });
+});
 
 describe('parsePort', () => {
   it('uses the default when the value is unset, empty or whitespace', () => {

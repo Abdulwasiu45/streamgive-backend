@@ -5,6 +5,7 @@ import { z } from 'zod';
 
 import { prisma } from '../db.js';
 import { requireAdminSignature, sep53Hash } from '../middleware/adminAuth.js';
+import { requireOwnerSignature } from '../middleware/ownerAuth.js';
 import { notify } from '../notifications/service.js';
 import { sendContactVerification, verifyContactToken } from '../notifications/contactVerification.js';
 import {
@@ -92,7 +93,7 @@ export const MAX_APPLICATION_LIST_OFFSET = 10_000;
  * 0–`MAX_APPLICATION_LIST_OFFSET` (default 0).
  */
 const listQuerySchema = z.object({
-  status: z.enum(['PENDING', 'APPROVED', 'REJECTED']).optional(),
+  status: z.enum(['PENDING', 'APPROVED', 'REJECTED', 'WITHDRAWN']).optional(),
   search: z.string().trim().min(1).max(200).optional(),
   submittedAfter: z.coerce.date().optional(),
   submittedBefore: z.coerce.date().optional(),
@@ -452,15 +453,20 @@ export async function ngoApplicationRoutes(app: FastifyInstance): Promise<void> 
       _count: { _all: true },
     });
 
-    const counts = { PENDING: 0, APPROVED: 0, REJECTED: 0 } as Record<string, number>;
+    const counts = { PENDING: 0, APPROVED: 0, REJECTED: 0, WITHDRAWN: 0 } as Record<string, number>;
     for (const row of grouped) {
       counts[row.status] = row._count._all;
     }
 
-    const total = counts.PENDING + counts.APPROVED + counts.REJECTED;
+    const total = counts.PENDING + counts.APPROVED + counts.REJECTED + counts.WITHDRAWN;
 
     return {
-      counts: { PENDING: counts.PENDING, APPROVED: counts.APPROVED, REJECTED: counts.REJECTED },
+      counts: {
+        PENDING: counts.PENDING,
+        APPROVED: counts.APPROVED,
+        REJECTED: counts.REJECTED,
+        WITHDRAWN: counts.WITHDRAWN,
+      },
       total,
     };
   });
@@ -676,6 +682,61 @@ export async function ngoApplicationRoutes(app: FastifyInstance): Promise<void> 
           (err as { code?: string }).code === 'P2025'
         ) {
           return reply.code(404).send({ error: 'not_found' });
+        }
+        throw err;
+      }
+    },
+  );
+
+  /**
+   * Lets the applicant withdraw their own pending NGO application.
+   * @route POST /v1/ngo-applications/:id/withdraw
+   * @param id Application UUID
+   * @auth Owner signature required via `x-owner-address`, `x-owner-timestamp`, and `x-owner-signature`.
+   * @returns 200 updated application; 400 invalid UUID; 401 unauthorized; 403 forbidden; 404 not_found; 409 not_pending.
+   */
+  app.post(
+    '/ngo-applications/:id/withdraw',
+    { preHandler: requireOwnerSignature },
+    async (request, reply) => {
+      const ownerAddress = request.headers['x-owner-address'];
+      if (typeof ownerAddress !== 'string') {
+        return reply.code(401).send({ error: 'unauthorized' });
+      }
+
+      const parsedParams = idParamSchema.safeParse(request.params);
+      if (!parsedParams.success) {
+        return reply.code(400).send({ error: 'invalid_request' });
+      }
+      const { id } = parsedParams.data;
+
+      const application = await prisma.ngoApplication.findUnique({ where: { id } });
+      if (!application) {
+        return reply.code(404).send({ error: 'not_found' });
+      }
+      if (application.ownerAddress !== ownerAddress) {
+        return reply.code(403).send({ error: 'forbidden' });
+      }
+      if (application.status !== 'PENDING') {
+        return reply.code(409).send({ error: 'not_pending' });
+      }
+
+      try {
+        const withdrawn = await prisma.ngoApplication.update({
+          where: { id, status: 'PENDING' },
+          data: {
+            status: 'WITHDRAWN',
+            withdrawnAt: new Date(),
+          },
+        });
+        return withdrawn;
+      } catch (err) {
+        if (
+          typeof err === 'object' &&
+          err !== null &&
+          (err as { code?: string }).code === 'P2025'
+        ) {
+          return reply.code(409).send({ error: 'not_pending' });
         }
         throw err;
       }

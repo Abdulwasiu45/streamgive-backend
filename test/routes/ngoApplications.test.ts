@@ -1,5 +1,5 @@
 import { Keypair } from '@stellar/stellar-sdk';
-import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../../src/notifications/service.js', () => ({ notify: vi.fn() }));
 
@@ -393,6 +393,118 @@ describe('POST /v1/ngo-applications', () => {
     });
     expect(stored).toHaveLength(1);
     expect(stored[0].status).toBe('PENDING');
+
+    await app.close();
+  });
+});
+
+describe('POST /v1/ngo-applications/:id/contact-email-verification', () => {
+  const originalResendApiKey = process.env.RESEND_API_KEY;
+  const originalEmailFrom = process.env.NOTIFY_EMAIL_FROM;
+  const originalApiPublicUrl = process.env.API_PUBLIC_URL;
+
+  beforeEach(() => {
+    process.env.RESEND_API_KEY = 'test-key';
+    process.env.NOTIFY_EMAIL_FROM = 'verify@example.org';
+    process.env.API_PUBLIC_URL = 'https://api.example.org';
+  });
+
+  afterEach(async () => {
+    if (originalResendApiKey === undefined) delete process.env.RESEND_API_KEY;
+    else process.env.RESEND_API_KEY = originalResendApiKey;
+    if (originalEmailFrom === undefined) delete process.env.NOTIFY_EMAIL_FROM;
+    else process.env.NOTIFY_EMAIL_FROM = originalEmailFrom;
+    if (originalApiPublicUrl === undefined) delete process.env.API_PUBLIC_URL;
+    else process.env.API_PUBLIC_URL = originalApiPublicUrl;
+    vi.restoreAllMocks();
+    await resetDb();
+  });
+
+  it('answers 202 and sends nothing when the id is not a valid UUID', async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(new Response(null, { status: 200 }));
+    const app = buildServer();
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/ngo-applications/not-a-valid-uuid/contact-email-verification',
+    });
+
+    expect(response.statusCode).toBe(202);
+    expect(response.json()).toEqual({ message: 'If eligible, a verification email has been sent.' });
+    expect(fetchSpy).not.toHaveBeenCalled();
+
+    await app.close();
+  });
+
+  it('answers 202 and sends nothing when the application does not exist', async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(new Response(null, { status: 200 }));
+    const app = buildServer();
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/ngo-applications/00000000-0000-4000-8000-000000000000/contact-email-verification',
+    });
+
+    expect(response.statusCode).toBe(202);
+    expect(response.json()).toEqual({ message: 'If eligible, a verification email has been sent.' });
+    expect(fetchSpy).not.toHaveBeenCalled();
+
+    await app.close();
+  });
+
+  it('answers 202 and sends nothing when the application is already verified', async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(new Response(null, { status: 200 }));
+    const app = buildServer();
+
+    const application = await prisma.ngoApplication.create({
+      data: {
+        ...validApplicationPayload(),
+        emailVerifiedAt: new Date(),
+      },
+    });
+
+    const response = await app.inject({
+      method: 'POST',
+      url: `/v1/ngo-applications/${application.id}/contact-email-verification`,
+    });
+
+    expect(response.statusCode).toBe(202);
+    expect(response.json()).toEqual({ message: 'If eligible, a verification email has been sent.' });
+    expect(fetchSpy).not.toHaveBeenCalled();
+
+    await app.close();
+  });
+
+  it('answers 202 and sends exactly one email for an eligible unverified application', async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(new Response(null, { status: 200 }));
+    const app = buildServer();
+
+    const application = await prisma.ngoApplication.create({
+      data: {
+        ...validApplicationPayload(),
+        emailVerifiedAt: null,
+      },
+    });
+
+    const response = await app.inject({
+      method: 'POST',
+      url: `/v1/ngo-applications/${application.id}/contact-email-verification`,
+    });
+
+    expect(response.statusCode).toBe(202);
+    expect(response.json()).toEqual({ message: 'If eligible, a verification email has been sent.' });
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+
+    const email = JSON.parse(String(fetchSpy.mock.calls[0][1]?.body)) as { to: string[] };
+    expect(email.to).toEqual([application.contactEmail]);
 
     await app.close();
   });

@@ -1,0 +1,2 @@
+ALTER TYPE "NgoApplicationStatus" ADD VALUE IF NOT EXISTS 'WITHDRAWN';
+ALTER TABLE "ngo_applications" ADD COLUMN IF NOT EXISTS "withdrawn_at" TIMESTAMP(3);

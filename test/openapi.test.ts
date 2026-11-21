@@ -31,6 +31,7 @@ describe('OpenAPI documentation', () => {
       ['/v1/admin/notification-endpoints', 'post'],
       ['/v1/admin/notification-endpoints/{id}', 'patch'],
       ['/v1/admin/notification-endpoints/{id}', 'delete'],
+      ['/v1/admin/notification-logs', 'get'],
     ] as const;
     for (const [path, method] of adminOperations) {
       expect(spec.paths?.[path]?.[method]).toHaveProperty('security', [
@@ -108,6 +109,21 @@ describe('OpenAPI documentation', () => {
         expect.objectContaining({ name: 'onChainId', in: 'path', required: true }),
       ]),
     );
+
+    await app.close();
+  });
+
+  it('documents GET /version and GET /v1/ngos/all search parameter', async () => {
+    const app = buildServer();
+    await app.ready();
+
+    const spec = app.swagger();
+    expect(spec.paths?.['/version']?.get).toBeDefined();
+
+    const adminNgoParams = (spec.paths?.['/v1/ngos/all']?.get?.parameters ?? [])
+      .filter((param: { in?: string }) => param.in === 'query')
+      .map((param: { name: string }) => param.name);
+    expect(adminNgoParams).toEqual(expect.arrayContaining(['limit', 'cursor', 'verified', 'q']));
 
     await app.close();
   });
