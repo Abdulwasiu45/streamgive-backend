@@ -6,6 +6,24 @@ backend. Except for health checks and metrics, API routes are mounted under
 addresses, timestamps, and signatures. JSON response fields shown are
 representative; timestamps are ISO 8601 strings.
 
+## Pagination
+
+All cursor endpoints accept an integer `limit` between 1 and 100, defaulting to 100. Omit `cursor` for the first page. Pass the previous response's `nextCursor` unchanged and keep the same filters and ordering. The cursor is the UUID of the last returned row and is exclusive. Stop on `nextCursor: null`, even when a page contains exactly `limit` rows.
+
+| GET endpoint | Default / max | Cursor or offset | End of results |
+| --- | --- | --- | --- |
+| /v1/streams | 100 / 100 | Stream UUID, newest first | `hasMore: false, nextCursor: null` |
+| /v1/streams/:id/activity | 100 / 100 | Event UUID, newest first | `hasMore: false, nextCursor: null`. Unknown UUID returns 400. |
+| /v1/donors | 100 / 100 | Donor UUID in the requested ranking | `nextCursor: null`. A cursor outside the ranking returns 400. |
+| /v1/ngos | 100 / 100 | NGO UUID in the selected sort and search | `nextCursor: null` |
+| /v1/ngos/all | 100 / 100 | NGO UUID, newest first | `nextCursor: null` |
+| /v1/ngos/:id/donors | 100 / 100 | Donor UUID, ascending by ID | `nextCursor: null` |
+| /v1/admin/dead-letters | 100 / 100 | Dead-letter UUID, newest first | `hasMore: false, nextCursor: null`. Unknown UUID produces an empty page. |
+| /v1/admin/notification-logs | 100 / 100 | Log UUID, newest first | `hasMore: false, nextCursor: null`. Unknown UUID produces an empty page. |
+| /v1/ngo-applications | 100 / 100 | `offset` defaults to 0 and accepts up to 10,000. Advance it by the number of items returned. | Stop on an empty page or when the next offset reaches `total`. |
+
+`GET /v1/ngos/:id` embeds up to 10 recent streams and returns `recentStreamsNextCursor` when more are available. Use this cursor with `GET /v1/streams` filtered to the same NGO. The donor CSV export streams the full result using internal batching. Other unpaged lists do not accept a continuation token.
+
 ## Authentication
 
 Routes marked **Admin signature** require all three headers:
