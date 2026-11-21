@@ -445,3 +445,124 @@ describe('GET /v1/donors/:address/streams.csv', () => {
     await app.close();
   });
 });
+
+describe('GET /v1/donors/:address/ngos', () => {
+  afterEach(async () => {
+    await resetDb();
+  });
+
+  it('lists distinct NGOs a donor supports with totals grouped by token', async () => {
+    const app = buildServer();
+    const [ngoA, ngoB] = await Promise.all([
+      prisma.ngo.create({
+        data: { ownerAddress: fakeAddress('N'), name: 'NGO A', verified: true },
+      }),
+      prisma.ngo.create({
+        data: { ownerAddress: fakeAddress('M'), name: 'NGO B', verified: false },
+      }),
+    ]);
+    const donor = await prisma.donor.create({ data: { address: fakeAddress('A') } });
+
+    await prisma.stream.createMany({
+      data: [
+        {
+          onChainId: 1n,
+          donorId: donor.id,
+          ngoId: ngoA.id,
+          tokenAddress: fakeAddress('T'),
+          rate: '1',
+          balance: '600',
+          withdrawn: '400',
+          status: 'ACTIVE',
+        },
+        {
+          onChainId: 2n,
+          donorId: donor.id,
+          ngoId: ngoA.id,
+          tokenAddress: fakeAddress('T'),
+          rate: '0',
+          balance: '500',
+          withdrawn: '200',
+          status: 'CANCELLED',
+        },
+        {
+          onChainId: 3n,
+          donorId: donor.id,
+          ngoId: ngoA.id,
+          tokenAddress: fakeAddress('U'),
+          rate: '1',
+          balance: '100',
+          withdrawn: '50',
+          status: 'ACTIVE',
+        },
+        {
+          onChainId: 4n,
+          donorId: donor.id,
+          ngoId: ngoB.id,
+          tokenAddress: fakeAddress('T'),
+          rate: '1',
+          balance: '300',
+          withdrawn: '100',
+          status: 'ACTIVE',
+        },
+      ],
+    });
+
+    const response = await app.inject({ method: 'GET', url: `/v1/donors/${donor.address}/ngos` });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().ngos).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          ngoId: ngoA.id,
+          name: 'NGO A',
+          streamCount: 3,
+          activeStreamCount: 2,
+          totalsByToken: [
+            { tokenAddress: fakeAddress('T'), committed: '1200', withdrawn: '600' },
+            { tokenAddress: fakeAddress('U'), committed: '150', withdrawn: '50' },
+          ],
+        }),
+        expect.objectContaining({
+          ngoId: ngoB.id,
+          name: 'NGO B',
+          streamCount: 1,
+          activeStreamCount: 1,
+          totalsByToken: [{ tokenAddress: fakeAddress('T'), committed: '400', withdrawn: '100' }],
+        }),
+      ]),
+    );
+
+    await app.close();
+  });
+
+  it('returns an empty list for a donor with no streams', async () => {
+    const app = buildServer();
+    const donor = await prisma.donor.create({ data: { address: fakeAddress('Z') } });
+
+    const response = await app.inject({ method: 'GET', url: `/v1/donors/${donor.address}/ngos` });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({ ngos: [] });
+
+    await app.close();
+  });
+
+  it('returns 404 for an unknown donor address', async () => {
+    const app = buildServer();
+    const response = await app.inject({
+      method: 'GET',
+      url: `/v1/donors/${fakeAddress('Q')}/ngos`,
+    });
+    expect(response.statusCode).toBe(404);
+    expect(response.json()).toEqual({ error: 'not_found' });
+    await app.close();
+  });
+
+  it('returns 400 for a malformed address', async () => {
+    const app = buildServer();
+    const response = await app.inject({ method: 'GET', url: '/v1/donors/not-an-address/ngos' });
+    expect(response.statusCode).toBe(400);
+    await app.close();
+  });
+});

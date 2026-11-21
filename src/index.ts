@@ -3,6 +3,7 @@
 // before anything else is imported.
 import 'dotenv/config';
 
+import { parseConfig } from './config.js';
 import { parsePort, parseShutdownTimeoutMs } from './config.js';
 import { dispatchEvent } from './indexer/dispatch.js';
 import { startIndexer } from './indexer/worker.js';
@@ -11,20 +12,20 @@ import { startWebhookDeliveryWorker } from './notifications/webhookDeliveryWorke
 import { buildServer } from './server.js';
 
 function fail(message: string): never {
-  // A single line with the variable and the bad value is easier to act on
-  // than a stack trace from inside the listen call.
+  // Print every configuration problem at once rather than a stack trace from listen().
   logger.error({ message }, 'Configuration Error');
   process.exit(1);
 }
 
-const port = (() => {
+const config = (() => {
   try {
-    return parsePort(process.env.PORT);
+    return parseConfig(process.env);
   } catch (err) {
     fail(err instanceof Error ? err.message : String(err));
   }
 })();
 
+const port = config.PORT;
 const shutdownTimeoutMs = (() => {
   try {
     return parseShutdownTimeoutMs(process.env.SHUTDOWN_TIMEOUT_MS);

@@ -9,13 +9,7 @@ import Fastify from 'fastify';
 import type { FastifyError, FastifyReply } from 'fastify';
 import packageJson from '../package.json' with { type: 'json' };
 
-import {
-  MAINTENANCE_RETRY_AFTER_SECONDS,
-  parseMaintenanceMode,
-  parseRateLimitMax,
-  parseRateLimitWindow,
-  parseSlowRequestThresholdMs,
-} from './config.js';
+import { MAINTENANCE_RETRY_AFTER_SECONDS, parseConfig } from './config.js';
 import { prisma } from './db.js';
 import { configuredAdminAddresses, requireAdminSignature } from './middleware/adminAuth.js';
 import { recordHttpRequest, renderMetrics } from './metrics.js';
@@ -110,21 +104,6 @@ export interface BuildServerOptions {
   trustProxy?: TrustProxySetting;
 }
 
-const DEFAULT_BODY_LIMIT_BYTES = 1_048_576;
-
-function configuredBodyLimit(): number {
-  const value = process.env.BODY_LIMIT_BYTES;
-  if (value === undefined || value.trim() === '') return DEFAULT_BODY_LIMIT_BYTES;
-  if (!/^\d+$/.test(value)) {
-    throw new Error('BODY_LIMIT_BYTES must be a positive integer.');
-  }
-  const parsed = Number(value);
-  if (!Number.isSafeInteger(parsed) || parsed < 1) {
-    throw new Error('BODY_LIMIT_BYTES must be a positive integer.');
-  }
-  return parsed;
-}
-
 /**
  * Races a promise against a timeout.  Rejects with a TimeoutError when the
  * deadline is reached so callers can treat it the same as any other failure.
@@ -150,24 +129,22 @@ export function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
 
 export function buildServer(options?: BuildServerOptions) {
   const requestStartedAt = new WeakMap<object, bigint>();
-  const bodyLimit = configuredBodyLimit();
-  // Parsed once per server build: an invalid value fails startup here with a
-  // message that names the variable, instead of surfacing as NaN or a plugin
-  // error on the first throttled request.
-  const rateLimitMax = parseRateLimitMax(process.env.RATE_LIMIT_MAX);
-  const rateLimitWindow = parseRateLimitWindow(process.env.RATE_LIMIT_WINDOW);
-  const slowRequestThresholdMs = parseSlowRequestThresholdMs(process.env.SLOW_REQUEST_THRESHOLD_MS);
-  const maintenanceMode = parseMaintenanceMode(process.env.MAINTENANCE_MODE);
+  const cfg = parseConfig(process.env);
+  const bodyLimit = cfg.BODY_LIMIT_BYTES;
+  const rateLimitMax = cfg.RATE_LIMIT_MAX;
+  const rateLimitWindow = cfg.RATE_LIMIT_WINDOW;
+  const slowRequestThresholdMs = cfg.SLOW_REQUEST_THRESHOLD_MS;
+  const maintenanceMode = cfg.MAINTENANCE_MODE;
   const trustProxySetting =
     options?.trustProxy !== undefined
       ? options.trustProxy
-      : parseTrustProxy(process.env.TRUST_PROXY);
+      : parseTrustProxy(cfg.TRUST_PROXY);
 
   const app = Fastify({
     ...requestIdOptions,
     bodyLimit,
     logger: {
-      level: process.env.LOG_LEVEL ?? 'info',
+      level: cfg.LOG_LEVEL,
       // Structured JSON otherwise (production: for log aggregation; test:
       // to avoid the worker-thread overhead above) — pino-pretty is a
       // devDependency on purpose, since the production image never needs it.
@@ -271,10 +248,7 @@ export function buildServer(options?: BuildServerOptions) {
   // Allowed origins are an explicit list, not a wildcard: the admin routes
   // authenticate with a signature the browser sends as a header, so any
   // origin allowed here can ask a signed-in admin's browser to call them.
-  const allowedOrigins = (process.env.CORS_ORIGINS ?? 'http://localhost:3001')
-    .split(',')
-    .map((origin) => origin.trim())
-    .filter((origin) => origin.length > 0);
+  const allowedOrigins = cfg.CORS_ORIGINS;
 
   app.register(cors, {
     origin: allowedOrigins,
@@ -443,10 +417,7 @@ export function buildServer(options?: BuildServerOptions) {
     });
   }
 
-  const HEALTH_CHECK_TIMEOUT_MS = parseInt(
-    process.env.HEALTH_CHECK_TIMEOUT_MS ?? '3000',
-    10,
-  );
+  const HEALTH_CHECK_TIMEOUT_MS = cfg.HEALTH_CHECK_TIMEOUT_MS;
 
   /**
    * Liveness probe — checks the database is reachable and returns the minimal
@@ -614,6 +585,15 @@ export function buildServer(options?: BuildServerOptions) {
           type: 'object',
           properties: { id: { type: 'string', format: 'uuid' } },
           required: ['id'],
+        },
+      },
+      '/v1/donors/:address/ngos': {
+        tags: ['Donors'],
+        summary: 'List distinct NGOs supported by a donor with token-grouped totals',
+        params: {
+          type: 'object',
+          properties: { address: { type: 'string', pattern: '^G[A-Z2-7]{55}$' } },
+          required: ['address'],
         },
       },
     };
