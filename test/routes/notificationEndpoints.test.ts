@@ -128,7 +128,7 @@ describe('admin notification endpoint routes', () => {
     const deleted = await app.inject({
       method: 'DELETE',
       url,
-      headers: signedHeaders('DELETE', url),
+      headers: signAdminRequest(adminKeypair, 'DELETE', url),
     });
     expect(deleted.statusCode).toBe(204);
     expect(await prisma.notificationEndpoint.findUnique({ where: { id: endpoint.id } })).toBeNull();

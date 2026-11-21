@@ -65,7 +65,7 @@ export async function requireOwnerSignature(
     (request.body !== undefined ? JSON.stringify(request.body) : '');
   const message = `${request.method.toUpperCase()}:${request.url}:${timestampRaw}:${bodyHash(rawBody)}`;
 
-  let valid = false;
+  let valid: boolean;
   try {
     const keypair = Keypair.fromPublicKey(address);
     const candidates = [Buffer.from(signature, 'base64'), Buffer.from(signature, 'hex')];

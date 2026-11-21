@@ -2,12 +2,14 @@
  * Tests for the process-level error handlers defined in src/index.ts.
  *
  * Strategy: import only the `shutdown` export (which is pure async teardown,
- * no process.exit) and verify it calls stopIndexer + app.close(). The
+ * no process.exit) and verify it stops background workers and closes app.
  * unhandledRejection handler is tested by emitting the event directly on the
  * mocked process listeners via a subprocess-style check that confirms
  * process.exit(1) would be triggered on that path.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+import { DEFAULT_SHUTDOWN_TIMEOUT_MS } from '../src/config.js';
 
 // ---------------------------------------------------------------------------
 // Mock heavy dependencies before src/index.ts is imported so the module can
@@ -37,6 +39,12 @@ vi.mock('../src/indexer/dispatch.js', () => ({
   dispatchEvent: vi.fn(),
 }));
 
+const mockStopWebhookDeliveryWorker = vi.fn().mockResolvedValue(undefined);
+
+vi.mock('../src/notifications/webhookDeliveryWorker.js', () => ({
+  startWebhookDeliveryWorker: vi.fn(() => mockStopWebhookDeliveryWorker),
+}));
+
 // ---------------------------------------------------------------------------
 // Now load the module under test.
 // ---------------------------------------------------------------------------
@@ -51,6 +59,8 @@ describe('shutdown()', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockApp.close.mockResolvedValue(undefined);
+    mockStopIndexer.mockResolvedValue(undefined);
+    mockStopWebhookDeliveryWorker.mockResolvedValue(undefined);
   });
 
   it('stops the indexer and closes the server', async () => {
@@ -74,6 +84,33 @@ describe('shutdown()', () => {
     mockApp.close.mockRejectedValue(boom);
 
     await expect(shutdown('SIGTERM')).rejects.toThrow('close failed');
+  });
+
+  it('times out and logs the operation still running when the indexer never stops', async () => {
+    vi.useFakeTimers();
+    mockStopIndexer.mockImplementation(() => new Promise(() => {}));
+
+    try {
+      const shutdownPromise = shutdown('SIGTERM');
+      const rejection = expect(shutdownPromise).rejects.toThrow(
+        'shutdown timed out while waiting for indexer',
+      );
+      await vi.advanceTimersByTimeAsync(DEFAULT_SHUTDOWN_TIMEOUT_MS);
+      await rejection;
+
+      expect(mockApp.log.error).toHaveBeenCalledWith(
+        expect.objectContaining({
+          signal: 'SIGTERM',
+          timeoutMs: DEFAULT_SHUTDOWN_TIMEOUT_MS,
+          running: 'indexer',
+        }),
+        'shutdown timed out',
+      );
+      expect(mockApp.close).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+      mockStopIndexer.mockResolvedValue(undefined);
+    }
   });
 });
 
@@ -126,6 +163,7 @@ describe('uncaughtException policy', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mockApp.close.mockResolvedValue(undefined);
     // Prevent process.exit from terminating the test runner.
     exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
   });
@@ -134,14 +172,28 @@ describe('uncaughtException policy', () => {
     exitSpy.mockRestore();
   });
 
-  it('logs the error and exits with code 1 when an uncaught exception occurs', () => {
+  it('logs the error, tears down the indexer and server, then exits with code 1', async () => {
     const error = new Error('fatal synchronous crash');
     process.emit('uncaughtException', error);
 
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
     expect(mockApp.log.error).toHaveBeenCalledWith(
       expect.objectContaining({ err: error }),
-      'uncaught exception',
+      'uncaughtException — shutting down',
     );
+    expect(mockStopIndexer).toHaveBeenCalled();
+    expect(mockApp.close).toHaveBeenCalled();
+    expect(exitSpy).toHaveBeenCalledWith(1);
+  });
+
+  it('still exits with code 1 when shutdown itself errors during an uncaught exception', async () => {
+    mockApp.close.mockRejectedValue(new Error('shutdown error'));
+
+    process.emit('uncaughtException', new Error('crash'));
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
     expect(exitSpy).toHaveBeenCalledWith(1);
   });
 });

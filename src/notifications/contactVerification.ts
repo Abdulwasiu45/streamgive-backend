@@ -4,6 +4,7 @@ import { prisma } from '../db.js';
 import { logger } from '../logger.js';
 
 const CONTACT_EMAIL_TOKEN_TTL_MS = 24 * 60 * 60 * 1000;
+const CONTACT_EMAIL_RESEND_COOLDOWN_MS = 5 * 60 * 1000;
 
 function hashToken(token: string): string {
   return createHash('sha256').update(token).digest('hex');
@@ -33,6 +34,24 @@ export async function sendContactVerification(application: {
     logger.error('API_PUBLIC_URL must use HTTPS');
     return false;
   }
+
+  const sentAt = new Date();
+  const reservation = await prisma.ngoApplication.updateMany({
+    where: {
+      id: application.id,
+      emailVerifiedAt: null,
+      OR: [
+        { lastContactVerificationSentAt: null },
+        {
+          lastContactVerificationSentAt: {
+            lt: new Date(sentAt.getTime() - CONTACT_EMAIL_RESEND_COOLDOWN_MS),
+          },
+        },
+      ],
+    },
+    data: { lastContactVerificationSentAt: sentAt },
+  });
+  if (reservation.count !== 1) return false;
 
   const token = randomBytes(32).toString('base64url');
   const expiresAt = new Date(Date.now() + CONTACT_EMAIL_TOKEN_TTL_MS);

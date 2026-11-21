@@ -347,6 +347,71 @@ describe('GET /ngos/all (admin)', () => {
     await app.close();
   });
 
+  it('returns an empty page when the cursor no longer exists', async () => {
+    const app = buildServer();
+    const url = '/v1/ngos/all?cursor=00000000-0000-4000-8000-000000000000';
+    const headers = signAdminRequest(adminKeypair, 'GET', url);
+
+    const response = await app.inject({ method: 'GET', url, headers });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({ ngos: [], nextCursor: null });
+
+    await app.close();
+  });
+
+  it('applies the verified filter when paginating with a cursor', async () => {
+    const app = buildServer();
+
+    await prisma.ngo.create({
+      data: {
+        ownerAddress: fakeAddress('A'),
+        name: 'Older Verified NGO',
+        verified: true,
+        createdAt: new Date('2024-01-01T00:00:00.000Z'),
+      },
+    });
+    await prisma.ngo.create({
+      data: {
+        ownerAddress: fakeAddress('B'),
+        name: 'Unverified NGO',
+        verified: false,
+        createdAt: new Date('2024-01-02T00:00:00.000Z'),
+      },
+    });
+    await prisma.ngo.create({
+      data: {
+        ownerAddress: fakeAddress('C'),
+        name: 'Newer Verified NGO',
+        verified: true,
+        createdAt: new Date('2024-01-03T00:00:00.000Z'),
+      },
+    });
+
+    const firstUrl = '/v1/ngos/all?verified=true&limit=1';
+    const firstHeaders = signAdminRequest(adminKeypair, 'GET', firstUrl);
+    const firstPage = await app.inject({ method: 'GET', url: firstUrl, headers: firstHeaders });
+
+    expect(firstPage.statusCode).toBe(200);
+    const firstBody = firstPage.json();
+    expect(firstBody.ngos.map((ngo: { name: string }) => ngo.name)).toEqual([
+      'Newer Verified NGO',
+    ]);
+    expect(firstBody.nextCursor).not.toBeNull();
+
+    const secondUrl = `/v1/ngos/all?verified=true&limit=1&cursor=${firstBody.nextCursor}`;
+    const secondHeaders = signAdminRequest(adminKeypair, 'GET', secondUrl);
+    const secondPage = await app.inject({ method: 'GET', url: secondUrl, headers: secondHeaders });
+
+    expect(secondPage.statusCode).toBe(200);
+    expect(secondPage.json().ngos.map((ngo: { name: string }) => ngo.name)).toEqual([
+      'Older Verified NGO',
+    ]);
+    expect(secondPage.json().nextCursor).toBeNull();
+
+    await app.close();
+  });
+
   it('paginates with cursor and returns no overlap between pages', async () => {
     const app = buildServer();
 

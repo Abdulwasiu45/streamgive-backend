@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { Keypair, StrKey } from '@stellar/stellar-sdk';
 import { z } from 'zod';
 
+import { parseConfig } from '../config.js';
 import { prisma } from '../db.js';
 import { requireAdminSignature, sep53Hash } from '../middleware/adminAuth.js';
 import { requireOwnerSignature } from '../middleware/ownerAuth.js';
@@ -162,6 +163,10 @@ async function createApplicationUnlessBlocked(data: z.infer<typeof applicationSc
 }
 
 export async function ngoApplicationRoutes(app: FastifyInstance): Promise<void> {
+  // Validated once by the central config schema (positive integer or startup
+  // fails); both application routes share it instead of re-parsing the env.
+  const applicationRateLimitMax = parseConfig(process.env).RATE_LIMIT_APPLICATION_MAX;
+
   /**
    * Issues a short-lived challenge that must be signed by the NGO owner address.
    * @route POST /v1/ngo-applications/challenge
@@ -208,7 +213,7 @@ export async function ngoApplicationRoutes(app: FastifyInstance): Promise<void> 
     {
       config: {
         rateLimit: {
-          max: Number(process.env.RATE_LIMIT_APPLICATION_MAX ?? 5),
+          max: applicationRateLimitMax,
           timeWindow: process.env.RATE_LIMIT_APPLICATION_WINDOW ?? '1 minute',
         },
       },
@@ -314,12 +319,32 @@ export async function ngoApplicationRoutes(app: FastifyInstance): Promise<void> 
   );
 
   /**
-   * Redeems the one-time link sent to an NGO application's contact email.
+   * Renders a confirmation page for the one-time link. GET must not consume
+   * the token because mail scanners and link previews fetch links automatically.
    * @route GET /v1/ngo-applications/verify-contact-email
+   * @query token opaque, single-use token sent by email
+   * @returns 200 HTML confirmation form; 400 invalid or expired token.
+   */
+  app.get('/ngo-applications/verify-contact-email', async (request, reply) => {
+    const parsed = contactVerificationTokenSchema.safeParse(request.query);
+    if (!parsed.success) return reply.code(400).send({ error: 'invalid_or_expired_token' });
+    const action =
+      `/v1/ngo-applications/verify-contact-email?token=${encodeURIComponent(parsed.data.token)}`;
+    return reply
+      .header('cache-control', 'no-store')
+      .type('text/html; charset=utf-8')
+      .send(
+        `<!doctype html><html lang="en"><meta charset="utf-8"><title>Verify contact email</title><p>Confirm this email address for your NGO application.</p><form method="post" action="${action}"><button type="submit">Confirm email</button></form></html>`,
+      );
+  });
+
+  /**
+   * Redeems the one-time link after an explicit form submission.
+   * @route POST /v1/ngo-applications/verify-contact-email
    * @query token opaque, single-use token sent by email
    * @returns 200 `{ verified: true }`; 400 invalid or expired token.
    */
-  app.get('/ngo-applications/verify-contact-email', async (request, reply) => {
+  app.post('/ngo-applications/verify-contact-email', async (request, reply) => {
     const parsed = contactVerificationTokenSchema.safeParse(request.query);
     if (!parsed.success) return reply.code(400).send({ error: 'invalid_or_expired_token' });
     const verified = await verifyContactToken(parsed.data.token);
@@ -337,7 +362,7 @@ export async function ngoApplicationRoutes(app: FastifyInstance): Promise<void> 
     {
       config: {
         rateLimit: {
-          max: Number(process.env.RATE_LIMIT_APPLICATION_MAX ?? 5),
+          max: applicationRateLimitMax,
           timeWindow: process.env.RATE_LIMIT_APPLICATION_WINDOW ?? '1 minute',
         },
       },
@@ -425,7 +450,7 @@ export async function ngoApplicationRoutes(app: FastifyInstance): Promise<void> 
    * Counts applications grouped by review status.
    * @route GET /v1/ngo-applications/stats
    * @auth Admin signature required via `x-admin-address`, `x-admin-timestamp`, and `x-admin-signature`.
-   * @returns 200 `{ counts: { PENDING, APPROVED, REJECTED }, total }`.
+   * @returns 200 `{ counts: { PENDING, APPROVED, REJECTED, WITHDRAWN }, total }`.
    */
   app.get('/ngo-applications/stats', { preHandler: requireAdminSignature }, async () => {
     const grouped = await prisma.ngoApplication.groupBy({
@@ -706,7 +731,6 @@ export async function ngoApplicationRoutes(app: FastifyInstance): Promise<void> 
           where: { id, status: 'PENDING' },
           data: {
             status: 'WITHDRAWN',
-            withdrawnAt: new Date(),
           },
         });
         return withdrawn;
