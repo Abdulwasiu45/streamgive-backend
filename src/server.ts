@@ -107,6 +107,7 @@ export function buildServer(options?: BuildServerOptions) {
   app.register(openApiPlugin);
   app.register(healthRoutesPlugin, {
     healthCheckTimeoutMs: cfg.HEALTH_CHECK_TIMEOUT_MS,
+    indexerLagThreshold: cfg.INDEXER_LAG_THRESHOLD,
   });
   app.register(versionRoutePlugin);
 

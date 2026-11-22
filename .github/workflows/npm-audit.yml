@@ -2,18 +2,18 @@ name: Dependency Audit
 
 on:
   schedule:
-    - cron: '0 6 * * 1'
+    - cron: "0 6 * * 1"
   push:
     branches: [main]
     paths:
-      - 'package.json'
-      - 'package-lock.json'
-      - '.github/workflows/npm-audit.yml'
+      - "package.json"
+      - "package-lock.json"
+      - ".github/workflows/npm-audit.yml"
   pull_request:
     paths:
-      - 'package.json'
-      - 'package-lock.json'
-      - '.github/workflows/npm-audit.yml'
+      - "package.json"
+      - "package-lock.json"
+      - ".github/workflows/npm-audit.yml"
   workflow_dispatch:
 
 concurrency:

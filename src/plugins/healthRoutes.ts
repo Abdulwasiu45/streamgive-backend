@@ -8,6 +8,7 @@ import { getLatestLedgerSequence } from '../stellar/rpc.js';
 
 interface HealthRoutesOptions {
   healthCheckTimeoutMs: number;
+  indexerLagThreshold: number;
 }
 
 /**
@@ -31,7 +32,7 @@ export function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
 }
 export const healthRoutesPlugin = fp(async function healthRoutesPlugin(
   app: FastifyInstance,
-  { healthCheckTimeoutMs }: HealthRoutesOptions,
+  { healthCheckTimeoutMs, indexerLagThreshold }: HealthRoutesOptions,
 ) {
   const HEALTH_CHECK_TIMEOUT_MS = healthCheckTimeoutMs;
 
@@ -81,11 +82,13 @@ export const healthRoutesPlugin = fp(async function healthRoutesPlugin(
       }
 
       const lag = latestLedger - checkpointLedger;
-      const parsedThreshold = parseInt(process.env.INDEXER_LAG_THRESHOLD ?? '100', 10);
-      const threshold = Number.isNaN(parsedThreshold) ? 0 : parsedThreshold;
-
-      if (lag > threshold) {
-        return reply.code(503).send({ status: 'error', reason: 'indexer_lagging', lag, threshold });
+      if (lag > indexerLagThreshold) {
+        return reply.code(503).send({
+          status: 'error',
+          reason: 'indexer_lagging',
+          lag,
+          threshold: indexerLagThreshold,
+        });
       }
 
       return { status: 'ok', lag, latestLedger, checkpointLedger };
