@@ -107,9 +107,9 @@ describe('GET /health/ready', () => {
     vi.spyOn(prisma, '$queryRaw').mockResolvedValue([{}]);
     const getLatestLedger = vi
       .spyOn(rpc.rpcServer, 'getLatestLedger')
-      .mockResolvedValue(
-        { sequence: 10050 } as Awaited<ReturnType<typeof rpc.rpcServer.getLatestLedger>>,
-      );
+      .mockResolvedValue({ sequence: 10050 } as Awaited<
+        ReturnType<typeof rpc.rpcServer.getLatestLedger>
+      >);
     vi.spyOn(await import('../../src/indexer/checkpoint.js'), 'getCheckpoint').mockResolvedValue(
       10000,
     );
@@ -177,10 +177,13 @@ describe('GET /health/ready', () => {
 
   it('responds with 503 when the RPC check times out', async () => {
     vi.spyOn(prisma, '$queryRaw').mockResolvedValue([{}]);
-    vi.spyOn(await import('../../src/stellar/rpc.js'), 'getLatestLedgerSequence').mockReturnValueOnce(
-      new Promise(() => {}) as never,
+    vi.spyOn(
+      await import('../../src/stellar/rpc.js'),
+      'getLatestLedgerSequence',
+    ).mockReturnValueOnce(new Promise(() => {}) as never);
+    vi.spyOn(await import('../../src/indexer/checkpoint.js'), 'getCheckpoint').mockResolvedValue(
+      10000,
     );
-    vi.spyOn(await import('../../src/indexer/checkpoint.js'), 'getCheckpoint').mockResolvedValue(10000);
 
     const previousTimeout = process.env.HEALTH_CHECK_TIMEOUT_MS;
     process.env.HEALTH_CHECK_TIMEOUT_MS = '50';
@@ -198,8 +201,12 @@ describe('GET /health/ready', () => {
 
   it('responds with 503 when RPC is unreachable', async () => {
     vi.spyOn(prisma, '$queryRaw').mockResolvedValue([{}]);
-    vi.spyOn(await import('../../src/stellar/rpc.js'), 'getLatestLedgerSequence').mockRejectedValue(new Error('RPC connection failed'));
-    vi.spyOn(await import('../../src/indexer/checkpoint.js'), 'getCheckpoint').mockResolvedValue(10000);
+    vi.spyOn(await import('../../src/stellar/rpc.js'), 'getLatestLedgerSequence').mockRejectedValue(
+      new Error('RPC connection failed'),
+    );
+    vi.spyOn(await import('../../src/indexer/checkpoint.js'), 'getCheckpoint').mockResolvedValue(
+      10000,
+    );
 
     const app = buildServer();
     const response = await app.inject({ method: 'GET', url: '/health/ready' });
@@ -211,8 +218,12 @@ describe('GET /health/ready', () => {
 
   it('responds with 503 when indexer has no checkpoint', async () => {
     vi.spyOn(prisma, '$queryRaw').mockResolvedValue([{}]);
-    vi.spyOn(await import('../../src/stellar/rpc.js'), 'getLatestLedgerSequence').mockResolvedValue(10050);
-    vi.spyOn(await import('../../src/indexer/checkpoint.js'), 'getCheckpoint').mockResolvedValue(undefined);
+    vi.spyOn(await import('../../src/stellar/rpc.js'), 'getLatestLedgerSequence').mockResolvedValue(
+      10050,
+    );
+    vi.spyOn(await import('../../src/indexer/checkpoint.js'), 'getCheckpoint').mockResolvedValue(
+      undefined,
+    );
 
     const app = buildServer();
     const response = await app.inject({ method: 'GET', url: '/health/ready' });
@@ -224,36 +235,37 @@ describe('GET /health/ready', () => {
 
   it('responds with 503 when indexer lag is above threshold', async () => {
     vi.spyOn(prisma, '$queryRaw').mockResolvedValue([{}]);
-    vi.spyOn(await import('../../src/stellar/rpc.js'), 'getLatestLedgerSequence').mockResolvedValue(10150);
-    vi.spyOn(await import('../../src/indexer/checkpoint.js'), 'getCheckpoint').mockResolvedValue(10000);
+    vi.spyOn(await import('../../src/stellar/rpc.js'), 'getLatestLedgerSequence').mockResolvedValue(
+      10150,
+    );
+    vi.spyOn(await import('../../src/indexer/checkpoint.js'), 'getCheckpoint').mockResolvedValue(
+      10000,
+    );
 
     const app = buildServer();
     const response = await app.inject({ method: 'GET', url: '/health/ready' });
     expect(response.statusCode).toBe(503);
-    expect(response.json()).toEqual({ status: 'error', reason: 'indexer_lagging', lag: 150, threshold: 100 });
+    expect(response.json()).toEqual({
+      status: 'error',
+      reason: 'indexer_lagging',
+      lag: 150,
+      threshold: 100,
+    });
 
     await app.close();
   });
 
-  it('treats a non-numeric INDEXER_LAG_THRESHOLD as 0', async () => {
+  it('rejects a non-numeric INDEXER_LAG_THRESHOLD during config parsing', () => {
     const original = process.env.INDEXER_LAG_THRESHOLD;
     process.env.INDEXER_LAG_THRESHOLD = 'abc';
 
-    vi.spyOn(await import('../../src/stellar/rpc.js'), 'getLatestLedgerSequence').mockResolvedValue(10001);
-    vi.spyOn(await import('../../src/indexer/checkpoint.js'), 'getCheckpoint').mockResolvedValue(10000);
-
-    const app = buildServer();
-    const response = await app.inject({ method: 'GET', url: '/health/ready' });
-    expect(response.statusCode).toBe(503);
-    const body = response.json();
-    expect(body.status).toBe('error');
-    expect(body.reason).toBe('indexer_lagging');
-    expect(body.lag).toBe(1);
-    expect(body.threshold).toBe(0);
-
-    await app.close();
-
-    if (original === undefined) delete process.env.INDEXER_LAG_THRESHOLD;
-    else process.env.INDEXER_LAG_THRESHOLD = original;
+    try {
+      expect(() => buildServer()).toThrow(
+        'INDEXER_LAG_THRESHOLD must be a non-negative integer, received "abc"',
+      );
+    } finally {
+      if (original === undefined) delete process.env.INDEXER_LAG_THRESHOLD;
+      else process.env.INDEXER_LAG_THRESHOLD = original;
+    }
   });
 });
