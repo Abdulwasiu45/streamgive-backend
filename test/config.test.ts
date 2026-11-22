@@ -173,6 +173,9 @@ describe('parseConfig', () => {
     expect(error.message).toContain('RATE_LIMIT_MAX');
     expect(error.message).toContain('RATE_LIMIT_WINDOW');
     expect(error.message).toContain('SOROBAN_RPC_URL');
+  });
+});
+
 describe('parseConfig numeric settings', () => {
   it('defaults RATE_LIMIT_APPLICATION_MAX and HEALTH_CHECK_TIMEOUT_MS when unset or blank', () => {
     for (const env of [{}, { RATE_LIMIT_APPLICATION_MAX: '  ', HEALTH_CHECK_TIMEOUT_MS: '' }]) {

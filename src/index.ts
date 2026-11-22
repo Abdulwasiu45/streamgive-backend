@@ -3,8 +3,7 @@
 // before anything else is imported.
 import 'dotenv/config';
 
-import { parseConfig } from './config.js';
-import { parsePort, parseShutdownTimeoutMs } from './config.js';
+import { parseConfig, parseShutdownTimeoutMs } from './config.js';
 import { dispatchEvent } from './indexer/dispatch.js';
 import { startIndexer } from './indexer/worker.js';
 import { logger } from './logger.js';
