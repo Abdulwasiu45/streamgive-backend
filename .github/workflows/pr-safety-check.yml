@@ -132,51 +132,6 @@ jobs:
             };
             const headModes = await readTree(pr.head.sha);
             const baseModes = await readTree(pr.base.sha);
-            // GitHub omits patches for large lockfiles, so inspect their package sources directly.
-            const inspectLargePackageLock = async (path) => {
-              const readLockfile = async (repository, ref) => {
-                if (!repository) throw new Error('repository is unavailable');
-                const { data } = await github.rest.repos.getContent({
-                  owner: repository.owner.login,
-                  repo: repository.name,
-                  path,
-                  ref,
-                });
-                if (Array.isArray(data) || data.type !== 'file' || data.encoding !== 'base64' || typeof data.content !== 'string') {
-                  throw new Error('GitHub did not return a readable file');
-                }
-                const lockfile = JSON.parse(Buffer.from(data.content, 'base64').toString('utf8'));
-                if (!lockfile.packages || typeof lockfile.packages !== 'object' || Array.isArray(lockfile.packages)) {
-                  throw new Error('package-lock.json has no package map');
-                }
-                return lockfile;
-              };
-
-              const [baseLock, headLock] = await Promise.all([
-                readLockfile({ owner: { login: owner }, name: repo }, pr.base.sha),
-                readLockfile(pr.head.repo, sha),
-              ]);
-              const approvedHosts = new Set(['registry.npmjs.org', 'registry.yarnpkg.com']);
-
-              for (const [location, pkg] of Object.entries(headLock.packages)) {
-                const previous = baseLock.packages[location];
-                if (!pkg.resolved || pkg.resolved === previous?.resolved) continue;
-
-                let resolved;
-                try {
-                  resolved = new URL(pkg.resolved);
-                } catch {
-                  flag(path, `${location} has an invalid package source`);
-                  continue;
-                }
-                if (!['http:', 'https:'].includes(resolved.protocol)
-                  || resolved.username
-                  || resolved.password
-                  || !approvedHosts.has(resolved.host.toLowerCase())) {
-                  flag(path, `${location} resolves from an unusual package source: ${resolved.host}`);
-                }
-              }
-            };
 
             for (const f of files) {
               const path = f.filename;
@@ -195,19 +150,10 @@ jobs:
                 if (/^scripts\/.*\.(sh|bash)$/.test(path)) flag(path, 'is a newly executable shell script', 'note');
                 else flag(path, 'is made executable');
               }
-              let checkedWithoutPatch = false;
-              if (!f.patch && f.changes > 0 && path === 'package-lock.json') {
-                checkedWithoutPatch = true;
-                try {
-                  await inspectLargePackageLock(path);
-                } catch (e) {
-                  flag(path, `could not be structurally inspected: ${e.message || String(e)}`);
-                }
-              }
               // Real images, fonts and binaries never have a text diff; one that does is disguised.
               if ((BINARY.test(path) || IMAGE.test(path)) && f.patch) flag(path, 'is named like a binary, font or image file but contains text, possibly disguised code');
               if (BINARY.test(path)) flag(path, 'adds or changes a font, binary, archive or script-runner file');
-              else if (!f.patch && f.changes > 0 && !IMAGE.test(path) && !checkedWithoutPatch) flag(path, 'could not be inspected: binary, or too large for GitHub to show a diff');
+              else if (!f.patch && f.changes > 0 && !IMAGE.test(path)) flag(path, 'could not be inspected: binary, or too large for GitHub to show a diff');
 
               const added = (f.patch || '').split('\n').filter(l => l.startsWith('+') && !l.startsWith('+++')).map(l => l.slice(1));
               if (added.some(l => (/\.(md|mdx|txt|rst)$/i.test(path) ? HIDDEN_PROSE : HIDDEN).test(l))) flag(path, 'contains invisible or bidirectional Unicode characters');
