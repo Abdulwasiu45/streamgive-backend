@@ -1,7 +1,8 @@
 generator client {
   provider = "prisma-client"
   output   = "../src/generated/prisma"
-  previewFeatures = ["driverAdapters"]
+  previewFeatures = ["driverAdapters", "queryCompiler"]
+  engineType = "client"
 
   // Pinned rather than inferred. Prisma decides this from the surrounding
   // project when it is not set, and the Docker build runs `prisma generate`
