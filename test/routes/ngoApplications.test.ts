@@ -313,7 +313,11 @@ describe('POST /v1/ngo-applications', () => {
     const response = await app.inject({
       method: 'POST',
       url: '/v1/ngo-applications',
-      payload: { ...payload, challenge: '00000000-0000-4000-8000-000000000000', signature: 'invalid' },
+      payload: {
+        ...payload,
+        challenge: '00000000-0000-4000-8000-000000000000',
+        signature: 'invalid',
+      },
     });
 
     expect(response.statusCode).toBe(400);
@@ -432,7 +436,9 @@ describe('POST /v1/ngo-applications/:id/contact-email-verification', () => {
     });
 
     expect(response.statusCode).toBe(202);
-    expect(response.json()).toEqual({ message: 'If eligible, a verification email has been sent.' });
+    expect(response.json()).toEqual({
+      message: 'If eligible, a verification email has been sent.',
+    });
     expect(fetchSpy).not.toHaveBeenCalled();
 
     await app.close();
@@ -450,7 +456,9 @@ describe('POST /v1/ngo-applications/:id/contact-email-verification', () => {
     });
 
     expect(response.statusCode).toBe(202);
-    expect(response.json()).toEqual({ message: 'If eligible, a verification email has been sent.' });
+    expect(response.json()).toEqual({
+      message: 'If eligible, a verification email has been sent.',
+    });
     expect(fetchSpy).not.toHaveBeenCalled();
 
     await app.close();
@@ -475,7 +483,9 @@ describe('POST /v1/ngo-applications/:id/contact-email-verification', () => {
     });
 
     expect(response.statusCode).toBe(202);
-    expect(response.json()).toEqual({ message: 'If eligible, a verification email has been sent.' });
+    expect(response.json()).toEqual({
+      message: 'If eligible, a verification email has been sent.',
+    });
     expect(fetchSpy).not.toHaveBeenCalled();
 
     await app.close();
@@ -500,7 +510,9 @@ describe('POST /v1/ngo-applications/:id/contact-email-verification', () => {
     });
 
     expect(response.statusCode).toBe(202);
-    expect(response.json()).toEqual({ message: 'If eligible, a verification email has been sent.' });
+    expect(response.json()).toEqual({
+      message: 'If eligible, a verification email has been sent.',
+    });
     expect(fetchSpy).toHaveBeenCalledTimes(1);
 
     const email = JSON.parse(String(fetchSpy.mock.calls[0][1]?.body)) as { to: string[] };
@@ -646,7 +658,12 @@ describe('admin NGO application review', () => {
 
   it('rejects a seconds-based timestamp with a clear unit error', async () => {
     const app = buildServer();
-    const headers = signAdminRequest(adminKeypair, 'GET', '/v1/ngo-applications', Math.floor(Date.now() / 1000).toString());
+    const headers = signAdminRequest(
+      adminKeypair,
+      'GET',
+      '/v1/ngo-applications',
+      Math.floor(Date.now() / 1000).toString(),
+    );
 
     const response = await app.inject({ method: 'GET', url: '/v1/ngo-applications', headers });
     expect(response.statusCode).toBe(401);
@@ -804,7 +821,13 @@ describe('admin NGO application review', () => {
     const realUrl = `/v1/ngo-applications/${application.id}/approve`;
     // Signed for a *different* application's approve endpoint.
     const body = JSON.stringify({});
-    const headers = signAdminRequest(adminKeypair, 'POST', '/v1/ngo-applications/other-id/approve', undefined, body);
+    const headers = signAdminRequest(
+      adminKeypair,
+      'POST',
+      '/v1/ngo-applications/other-id/approve',
+      undefined,
+      body,
+    );
 
     const response = await app.inject({ method: 'POST', url: realUrl, headers, payload: {} });
     expect(response.statusCode).toBe(401);
@@ -818,7 +841,13 @@ describe('admin NGO application review', () => {
     const nonExistentId = '00000000-0000-0000-0000-000000000000';
     const approveUrl = `/v1/ngo-applications/${nonExistentId}/approve`;
     const approveBody = JSON.stringify({});
-    const approveHeaders = signAdminRequest(adminKeypair, 'POST', approveUrl, undefined, approveBody);
+    const approveHeaders = signAdminRequest(
+      adminKeypair,
+      'POST',
+      approveUrl,
+      undefined,
+      approveBody,
+    );
 
     const approveResponse = await app.inject({
       method: 'POST',
@@ -1158,9 +1187,9 @@ describe('GET /ngo-applications search and date filters', () => {
 
     const byEmail = await list('search=BETA%40EXAMPLE');
     expect(byEmail.statusCode).toBe(200);
-    expect(byEmail.json().applications.map((application: { id: string }) => application.id)).toEqual(
-      [beta.id],
-    );
+    expect(
+      byEmail.json().applications.map((application: { id: string }) => application.id),
+    ).toEqual([beta.id]);
 
     const noMatch = await list('search=gamma&status=APPROVED');
     expect(noMatch.statusCode).toBe(200);
@@ -1174,7 +1203,10 @@ describe('GET /ngo-applications search and date filters', () => {
     const pending = await list('search=%40example&status=PENDING');
     expect(pending.statusCode).toBe(200);
     expect(
-      pending.json().applications.map((application: { id: string }) => application.id).sort(),
+      pending
+        .json()
+        .applications.map((application: { id: string }) => application.id)
+        .sort(),
     ).toEqual([alpha.id, gamma.id].sort());
 
     const approved = await list('search=%40example&status=APPROVED');
@@ -1199,9 +1231,9 @@ describe('GET /ngo-applications search and date filters', () => {
       `submittedBefore=${encodeURIComponent('2024-01-31T23:59:59.999Z')}&status=PENDING`,
     );
     expect(before.statusCode).toBe(200);
-    expect(
-      before.json().applications.map((application: { id: string }) => application.id),
-    ).toEqual([alpha.id]);
+    expect(before.json().applications.map((application: { id: string }) => application.id)).toEqual(
+      [alpha.id],
+    );
 
     const between = await list(
       `submittedAfter=${encodeURIComponent('2024-01-15T00:00:00.000Z')}&submittedBefore=${encodeURIComponent('2024-03-15T00:00:00.000Z')}&status=PENDING`,

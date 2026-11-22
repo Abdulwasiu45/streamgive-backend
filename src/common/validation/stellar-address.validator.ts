@@ -12,5 +12,5 @@ export const stellarAddressSchema = z
         return false;
       }
     },
-    { message: 'Invalid Stellar public key or bad checksum' }
+    { message: 'Invalid Stellar public key or bad checksum' },
   );

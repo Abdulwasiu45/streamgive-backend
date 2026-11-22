@@ -1,6 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { DONATION_VAULT_CONTRACT_ID, NGO_REGISTRY_CONTRACT_ID } from '../../src/indexer/contracts.js';
+import {
+  DONATION_VAULT_CONTRACT_ID,
+  NGO_REGISTRY_CONTRACT_ID,
+} from '../../src/indexer/contracts.js';
 import { dispatchEvent } from '../../src/indexer/dispatch.js';
 import { handleDonationVaultEvent } from '../../src/indexer/handlers/donationVault.js';
 import { handleNgoRegistryEvent } from '../../src/indexer/handlers/ngoRegistry.js';
@@ -55,9 +58,7 @@ describe('dispatchEvent', () => {
     const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {});
     const unknownContractId = 'C_UNKNOWN_CONTRACT_ID';
     const unknownTotal = (metrics: string) =>
-      Number(
-        metrics.match(/^streamgive_indexer_events_unknown_contract_total (\d+)$/m)?.[1] ?? 0,
-      );
+      Number(metrics.match(/^streamgive_indexer_events_unknown_contract_total (\d+)$/m)?.[1] ?? 0);
     const before = unknownTotal(renderMetrics());
     const event = {
       ...makeEvent([symbolScVal('test')], symbolScVal('test')),

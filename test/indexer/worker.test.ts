@@ -655,11 +655,9 @@ describe('startIndexer stop behavior', () => {
       .mockReset()
       .mockResolvedValue({ lastLedger: 500, lastEventId: undefined });
     mocks.getLatestLedgerSequence.mockReset().mockResolvedValue(10000);
-    mocks.getEvents
-      .mockReset()
-      .mockRejectedValueOnce({
-        message: 'startLedger must be within the ledger range [9000, 10000]',
-      });
+    mocks.getEvents.mockReset().mockRejectedValueOnce({
+      message: 'startLedger must be within the ledger range [9000, 10000]',
+    });
     mocks.saveCheckpoint.mockReset().mockResolvedValue(undefined);
 
     const { pollOnce } = await freshIndexer();

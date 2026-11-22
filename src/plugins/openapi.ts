@@ -6,7 +6,7 @@ import packageJson from '../../package.json' with { type: 'json' };
 
 import { requireAdminSignature } from '../middleware/adminAuth.js';
 
-export const openApiPlugin = fp(async function openApiPlugin(app: FastifyInstance) {
+export const openApiPlugin = fp(function openApiPlugin(app: FastifyInstance) {
   app.register(swagger, {
     openapi: {
       info: {

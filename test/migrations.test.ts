@@ -112,95 +112,91 @@ describe('Prisma schema and migrations', () => {
     }
   }, 10_000);
 
-  it(
-    'applying all migrations to an empty database produces no drift against schema.prisma',
-    async () => {
-      if (!dbAvailable) {
-        console.warn(
-          '[skip] Postgres is not reachable — skipping migration drift check.\n' +
-            '       Run `docker compose up -d postgres` and re-run the tests to enable it.',
+  it('applying all migrations to an empty database produces no drift against schema.prisma', async () => {
+    if (!dbAvailable) {
+      console.warn(
+        '[skip] Postgres is not reachable — skipping migration drift check.\n' +
+          '       Run `docker compose up -d postgres` and re-run the tests to enable it.',
+      );
+      return;
+    }
+
+    // ------------------------------------------------------------------
+    // Step 1: wipe the public schema and re-create it so we start fresh.
+    // This is safe because the test suite always uses the dedicated
+    // streamgive_test database, never the development one.
+    // ------------------------------------------------------------------
+    await client.query('DROP SCHEMA public CASCADE');
+    await client.query('CREATE SCHEMA public');
+
+    // ------------------------------------------------------------------
+    // Step 2: apply every migration SQL file in chronological order.
+    // We run them in the same order Prisma would: sorted by directory name
+    // (which starts with a timestamp).
+    // ------------------------------------------------------------------
+    const entries = await readdir(MIGRATIONS_DIR, { withFileTypes: true });
+    const migrationDirs = entries
+      .filter((e) => e.isDirectory())
+      .map((e) => e.name)
+      .sort();
+
+    for (const dir of migrationDirs) {
+      const sqlPath = path.join(MIGRATIONS_DIR, dir, 'migration.sql');
+      let sql: string;
+      try {
+        sql = await readFile(sqlPath, 'utf8');
+      } catch {
+        // Directory exists but has no migration.sql (e.g. a baseline-only
+        // folder).  Skip it.
+        continue;
+      }
+      try {
+        await client.query(sql);
+      } catch (err) {
+        throw new Error(
+          `Migration ${dir} failed to apply:\n${(err as Error).message}\n\n` +
+            'Fix the SQL in the migration file or regenerate the migration with ' +
+            '`prisma migrate dev`.',
+          { cause: err },
         );
-        return;
       }
+    }
 
-      // ------------------------------------------------------------------
-      // Step 1: wipe the public schema and re-create it so we start fresh.
-      // This is safe because the test suite always uses the dedicated
-      // streamgive_test database, never the development one.
-      // ------------------------------------------------------------------
-      await client.query('DROP SCHEMA public CASCADE');
-      await client.query('CREATE SCHEMA public');
+    // ------------------------------------------------------------------
+    // Step 3: inspect the resulting database and compare against the
+    // expected shape derived from schema.prisma.
+    // ------------------------------------------------------------------
 
-      // ------------------------------------------------------------------
-      // Step 2: apply every migration SQL file in chronological order.
-      // We run them in the same order Prisma would: sorted by directory name
-      // (which starts with a timestamp).
-      // ------------------------------------------------------------------
-      const entries = await readdir(MIGRATIONS_DIR, { withFileTypes: true });
-      const migrationDirs = entries
-        .filter((e) => e.isDirectory())
-        .map((e) => e.name)
-        .sort();
-
-      for (const dir of migrationDirs) {
-        const sqlPath = path.join(MIGRATIONS_DIR, dir, 'migration.sql');
-        let sql: string;
-        try {
-          sql = await readFile(sqlPath, 'utf8');
-        } catch {
-          // Directory exists but has no migration.sql (e.g. a baseline-only
-          // folder).  Skip it.
-          continue;
-        }
-        try {
-          await client.query(sql);
-        } catch (err) {
-          throw new Error(
-            `Migration ${dir} failed to apply:\n${(err as Error).message}\n\n` +
-              'Fix the SQL in the migration file or regenerate the migration with ' +
-              '`prisma migrate dev`.',
-            { cause: err },
-          );
-        }
-      }
-
-      // ------------------------------------------------------------------
-      // Step 3: inspect the resulting database and compare against the
-      // expected shape derived from schema.prisma.
-      // ------------------------------------------------------------------
-
-      // 3a. Collect actual tables in the public schema.
-      const tablesResult = await client.query<{ table_name: string }>(
-        `SELECT table_name FROM information_schema.tables
+    // 3a. Collect actual tables in the public schema.
+    const tablesResult = await client.query<{ table_name: string }>(
+      `SELECT table_name FROM information_schema.tables
          WHERE table_schema = 'public' AND table_type = 'BASE TABLE'`,
-      );
-      const actualTables = new Set(
-        tablesResult.rows.map((r) => r.table_name).filter((t) => !PRISMA_INTERNAL_TABLES.has(t)),
-      );
+    );
+    const actualTables = new Set(
+      tablesResult.rows.map((r) => r.table_name).filter((t) => !PRISMA_INTERNAL_TABLES.has(t)),
+    );
 
-      // 3b. Collect actual columns per table.
-      const colsResult = await client.query<{ table_name: string; column_name: string }>(
-        `SELECT table_name, column_name FROM information_schema.columns
+    // 3b. Collect actual columns per table.
+    const colsResult = await client.query<{ table_name: string; column_name: string }>(
+      `SELECT table_name, column_name FROM information_schema.columns
          WHERE table_schema = 'public'`,
-      );
-      const actualColumns = new Map<string, Set<string>>();
-      for (const { table_name, column_name } of colsResult.rows) {
-        if (!actualColumns.has(table_name)) actualColumns.set(table_name, new Set());
-        actualColumns.get(table_name)!.add(column_name);
-      }
+    );
+    const actualColumns = new Map<string, Set<string>>();
+    for (const { table_name, column_name } of colsResult.rows) {
+      if (!actualColumns.has(table_name)) actualColumns.set(table_name, new Set());
+      actualColumns.get(table_name)!.add(column_name);
+    }
 
-      // 3c. Compare the database shape against the Prisma schema metadata.
-      const missing = findSchemaDrift(EXPECTED_TABLES, actualTables, actualColumns);
+    // 3c. Compare the database shape against the Prisma schema metadata.
+    const missing = findSchemaDrift(EXPECTED_TABLES, actualTables, actualColumns);
 
-      expect(
-        missing,
-        'Migration drift detected between migrations and schema.prisma.\n' +
-          'Run `prisma migrate dev` to generate a migration for the pending changes.\n\n' +
-          missing.join('\n'),
-      ).toHaveLength(0);
-    },
-    60_000,
-  );
+    expect(
+      missing,
+      'Migration drift detected between migrations and schema.prisma.\n' +
+        'Run `prisma migrate dev` to generate a migration for the pending changes.\n\n' +
+        missing.join('\n'),
+    ).toHaveLength(0);
+  }, 60_000);
 
   // Clean up the connection after all tests in this file have run.
   // We intentionally do not restore the schema — resetDb() in other test

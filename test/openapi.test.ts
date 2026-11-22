@@ -112,9 +112,7 @@ describe('OpenAPI documentation', () => {
     const app = buildServer();
     await app.ready();
 
-    expect(
-      app.swagger().paths?.['/v1/streams/on-chain/{onChainId}']?.get?.parameters,
-    ).toEqual(
+    expect(app.swagger().paths?.['/v1/streams/on-chain/{onChainId}']?.get?.parameters).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ name: 'onChainId', in: 'path', required: true }),
       ]),

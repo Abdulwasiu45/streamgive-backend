@@ -36,10 +36,18 @@ describe('pruneOldLogs', () => {
     });
 
     expect(await pruneOldLogs(now)).toEqual({ notifications: 1, deadLetters: 1 });
-    expect(await prisma.notificationLog.findUnique({ where: { id: oldNotification.id } })).toBeNull();
-    expect(await prisma.notificationLog.findUnique({ where: { id: recentNotification.id } })).not.toBeNull();
+    expect(
+      await prisma.notificationLog.findUnique({ where: { id: oldNotification.id } }),
+    ).toBeNull();
+    expect(
+      await prisma.notificationLog.findUnique({ where: { id: recentNotification.id } }),
+    ).not.toBeNull();
     expect(await prisma.indexerDeadLetter.findUnique({ where: { id: oldResolved.id } })).toBeNull();
-    expect(await prisma.indexerDeadLetter.findUnique({ where: { id: recentResolved.id } })).not.toBeNull();
-    expect(await prisma.indexerDeadLetter.findUnique({ where: { id: unresolved.id } })).not.toBeNull();
+    expect(
+      await prisma.indexerDeadLetter.findUnique({ where: { id: recentResolved.id } }),
+    ).not.toBeNull();
+    expect(
+      await prisma.indexerDeadLetter.findUnique({ where: { id: unresolved.id } }),
+    ).not.toBeNull();
   });
 });

@@ -4,10 +4,7 @@ type HttpKey = `${string}\u0000${string}\u0000${number}`;
 
 const HTTP_DURATION_BUCKETS = [0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10];
 const httpRequests = new Map<HttpKey, number>();
-const httpDuration = new Map<
-  HttpKey,
-  { count: number; sum: number; buckets: number[] }
->();
+const httpDuration = new Map<HttpKey, { count: number; sum: number; buckets: number[] }>();
 const notificationDeliveries = new Map<'success' | 'failure', number>();
 const processStartTimeSeconds = Date.now() / 1000 - process.uptime();
 
