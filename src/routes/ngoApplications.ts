@@ -8,7 +8,10 @@ import { prisma } from '../db.js';
 import { requireAdminSignature, sep53Hash } from '../middleware/adminAuth.js';
 import { requireOwnerSignature } from '../middleware/ownerAuth.js';
 import { notify } from '../notifications/service.js';
-import { sendContactVerification, verifyContactToken } from '../notifications/contactVerification.js';
+import {
+  sendContactVerification,
+  verifyContactToken,
+} from '../notifications/contactVerification.js';
 import {
   abandonIdempotentRequest,
   beginIdempotentRequest,
@@ -165,7 +168,9 @@ async function createApplicationUnlessBlocked(data: z.infer<typeof applicationSc
 export async function ngoApplicationRoutes(app: FastifyInstance): Promise<void> {
   // Validated once by the central config schema (positive integer or startup
   // fails); both application routes share it instead of re-parsing the env.
-  const applicationRateLimitMax = parseConfig(process.env).RATE_LIMIT_APPLICATION_MAX;
+  const config = parseConfig(process.env);
+  const applicationRateLimitMax = config.RATE_LIMIT_APPLICATION_MAX;
+  const applicationRateLimitWindow = config.RATE_LIMIT_APPLICATION_WINDOW;
 
   /**
    * Issues a short-lived challenge that must be signed by the NGO owner address.
@@ -214,7 +219,7 @@ export async function ngoApplicationRoutes(app: FastifyInstance): Promise<void> 
       config: {
         rateLimit: {
           max: applicationRateLimitMax,
-          timeWindow: process.env.RATE_LIMIT_APPLICATION_WINDOW ?? '1 minute',
+          timeWindow: applicationRateLimitWindow,
         },
       },
     },
@@ -328,8 +333,7 @@ export async function ngoApplicationRoutes(app: FastifyInstance): Promise<void> 
   app.get('/ngo-applications/verify-contact-email', async (request, reply) => {
     const parsed = contactVerificationTokenSchema.safeParse(request.query);
     if (!parsed.success) return reply.code(400).send({ error: 'invalid_or_expired_token' });
-    const action =
-      `/v1/ngo-applications/verify-contact-email?token=${encodeURIComponent(parsed.data.token)}`;
+    const action = `/v1/ngo-applications/verify-contact-email?token=${encodeURIComponent(parsed.data.token)}`;
     return reply
       .header('cache-control', 'no-store')
       .type('text/html; charset=utf-8')
@@ -363,7 +367,7 @@ export async function ngoApplicationRoutes(app: FastifyInstance): Promise<void> 
       config: {
         rateLimit: {
           max: applicationRateLimitMax,
-          timeWindow: process.env.RATE_LIMIT_APPLICATION_WINDOW ?? '1 minute',
+          timeWindow: applicationRateLimitWindow,
         },
       },
     },

@@ -33,9 +33,9 @@
   "lint-staged": {
     "*.{js,ts}": [
       "eslint --fix",
-      "prettier --write"
+      "node ./node_modules/prettier/bin/prettier.cjs --write"
     ],
-    "*.{json,md,yml,yaml}": "prettier --write"
+    "*.{json,md,yml,yaml}": "node ./node_modules/prettier/bin/prettier.cjs --write"
   },
   "dependencies": {
     "@fastify/compress": "^9.2.0",

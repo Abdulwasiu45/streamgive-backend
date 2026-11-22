@@ -17,6 +17,34 @@ import {
   parseRpcUrls,
   parseShutdownTimeoutMs,
 } from '../src/config.js';
+import { envDuration, envInt } from '../src/config/env.js';
+
+describe('envInt', () => {
+  it('uses the default for unset or blank values and trims integers', () => {
+    expect(envInt(undefined, 'PORT', { defaultValue: 3000, min: 1 })).toBe(3000);
+    expect(envInt(' 42 ', 'COUNT', { min: 0 })).toBe(42);
+  });
+
+  it('rejects invalid or out-of-range values with the setting name and value', () => {
+    expect(() => envInt('1.5', 'COUNT', { min: 0 })).toThrow(
+      'COUNT must be a non-negative integer, received "1.5"',
+    );
+    expect(() => envInt('0', 'PORT', { min: 1, max: 65535 })).toThrow(
+      'PORT must be an integer between 1 and 65535, received "0"',
+    );
+  });
+});
+
+describe('envDuration', () => {
+  it('uses its default and accepts positive human-readable durations', () => {
+    expect(envDuration(undefined, 'WINDOW', '1 minute')).toBe('1 minute');
+    expect(envDuration(' 30s ', 'WINDOW', '1 minute')).toBe('30s');
+  });
+
+  it('rejects invalid or non-positive durations with the setting name', () => {
+    expect(() => envDuration('0', 'WINDOW', '1 minute')).toThrow(/WINDOW.*positive duration/);
+  });
+});
 
 describe('parseMaintenanceMode', () => {
   it('is off when unset or false', () => {
@@ -126,11 +154,7 @@ describe('parseRpcUrls', () => {
   it('parses a comma-separated list of http(s) URLs in order', () => {
     expect(
       parseRpcUrls('https://rpc-1.example.com, https://rpc-2.example.com, http://localhost:8000'),
-    ).toEqual([
-      'https://rpc-1.example.com',
-      'https://rpc-2.example.com',
-      'http://localhost:8000',
-    ]);
+    ).toEqual(['https://rpc-1.example.com', 'https://rpc-2.example.com', 'http://localhost:8000']);
   });
 
   it('rejects invalid or non-http(s) URLs', () => {
@@ -173,6 +197,9 @@ describe('parseConfig', () => {
     expect(error.message).toContain('RATE_LIMIT_MAX');
     expect(error.message).toContain('RATE_LIMIT_WINDOW');
     expect(error.message).toContain('SOROBAN_RPC_URL');
+  });
+});
+
 describe('parseConfig numeric settings', () => {
   it('defaults RATE_LIMIT_APPLICATION_MAX and HEALTH_CHECK_TIMEOUT_MS when unset or blank', () => {
     for (const env of [{}, { RATE_LIMIT_APPLICATION_MAX: '  ', HEALTH_CHECK_TIMEOUT_MS: '' }]) {

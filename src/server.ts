@@ -10,6 +10,7 @@ import type { FastifyError, FastifyReply } from 'fastify';
 import packageJson from '../package.json' with { type: 'json' };
 
 import { MAINTENANCE_RETRY_AFTER_SECONDS, parseConfig } from './config.js';
+import { envInt } from './config/env.js';
 import { prisma } from './db.js';
 import { configuredAdminAddresses, requireAdminSignature } from './middleware/adminAuth.js';
 import { recordHttpRequest, renderMetrics } from './metrics.js';
@@ -86,10 +87,15 @@ export function parseTrustProxy(value: string | undefined): TrustProxySetting {
   }
   const num = Number(trimmed);
   if (!Number.isNaN(num) && Number.isInteger(num)) {
-    if (num <= 0) {
+    const hops = envInt(trimmed, 'TRUST_PROXY', {
+      min: -Number.MAX_SAFE_INTEGER,
+      max: Number.MAX_SAFE_INTEGER,
+    });
+    if (hops === undefined) return true;
+    if (hops <= 0) {
       return false;
     }
-    return (_address: string, hop: number) => hop < num;
+    return (_address: string, hop: number) => hop < hops;
   }
   if (trimmed.includes(',')) {
     return trimmed
@@ -110,10 +116,7 @@ export interface BuildServerOptions {
  */
 export function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(
-      () => reject(new Error(`health check timed out after ${ms} ms`)),
-      ms,
-    );
+    const timer = setTimeout(() => reject(new Error(`health check timed out after ${ms} ms`)), ms);
     promise.then(
       (v) => {
         clearTimeout(timer);
@@ -136,9 +139,7 @@ export function buildServer(options?: BuildServerOptions) {
   const slowRequestThresholdMs = cfg.SLOW_REQUEST_THRESHOLD_MS;
   const maintenanceMode = cfg.MAINTENANCE_MODE;
   const trustProxySetting =
-    options?.trustProxy !== undefined
-      ? options.trustProxy
-      : parseTrustProxy(cfg.TRUST_PROXY);
+    options?.trustProxy !== undefined ? options.trustProxy : parseTrustProxy(cfg.TRUST_PROXY);
 
   const app = Fastify({
     ...requestIdOptions,
@@ -321,9 +322,7 @@ export function buildServer(options?: BuildServerOptions) {
   const rootRateLimitedRoutes = new Set(['/metrics', '/health', '/health/ready']);
   app.addHook('onRequest', async (request, reply) => {
     if (rootRateLimitedRoutes.has(request.routeOptions.url ?? '')) {
-      await request.server.rateLimit
-        .call(request.server)
-        .call(request.server, request, reply);
+      await request.server.rateLimit.call(request.server).call(request.server, request, reply);
     }
   });
 
@@ -465,8 +464,7 @@ export function buildServer(options?: BuildServerOptions) {
       }
 
       const lag = latestLedger - checkpointLedger;
-      const parsedThreshold = parseInt(process.env.INDEXER_LAG_THRESHOLD ?? '100', 10);
-      const threshold = Number.isNaN(parsedThreshold) ? 0 : parsedThreshold;
+      const threshold = cfg.INDEXER_LAG_THRESHOLD;
 
       if (lag > threshold) {
         return reply.code(503).send({ status: 'error', reason: 'indexer_lagging', lag, threshold });
