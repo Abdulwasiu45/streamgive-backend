@@ -1,5 +1,8 @@
 # Architecture
 
+The rationale for key architectural choices is recorded in
+[`docs/adr/`](./docs/adr/).
+
 StreamGive's backend runs its HTTP API, Soroban event indexer, and notification
 dispatcher in one Node.js process. They share the process environment, database
 client, logger, and in-memory metrics; the indexer starts alongside the API
