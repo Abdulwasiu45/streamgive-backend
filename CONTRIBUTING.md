@@ -16,6 +16,17 @@ process, and more) see the
 
 ---
 
+## Dev container
+
+With Docker and the VS Code Dev Containers extension installed, open the
+repository and run **Dev Containers: Reopen in Container**. The container
+installs Node dependencies, starts Postgres, creates `.env.test`, and applies
+the test database migrations. When setup finishes, run `npm test`. The app
+container has its development `DATABASE_URL` preconfigured; run
+`npm run db:deploy` before starting the API if you need the development schema.
+
+---
+
 ## Local setup
 
 ```bash

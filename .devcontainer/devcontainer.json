@@ -1,0 +1,13 @@
+{
+  "name": "StreamGive Backend",
+  "dockerComposeFile": "docker-compose.yml",
+  "service": "app",
+  "workspaceFolder": "/workspaces/streamgive-backend",
+  "forwardPorts": [3000],
+  "postCreateCommand": "npm install && printf 'DATABASE_URL=\"%s\"\\n' \"$TEST_DATABASE_URL\" > .env.test && npm run db:deploy:test",
+  "customizations": {
+    "vscode": {
+      "extensions": ["dbaeumer.vscode-eslint", "esbenp.prettier-vscode"]
+    }
+  }
+}
