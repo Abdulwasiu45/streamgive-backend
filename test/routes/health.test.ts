@@ -235,25 +235,17 @@ describe('GET /health/ready', () => {
     await app.close();
   });
 
-  it('treats a non-numeric INDEXER_LAG_THRESHOLD as 0', async () => {
+  it('rejects a non-numeric INDEXER_LAG_THRESHOLD during configuration validation', () => {
     const original = process.env.INDEXER_LAG_THRESHOLD;
     process.env.INDEXER_LAG_THRESHOLD = 'abc';
 
-    vi.spyOn(await import('../../src/stellar/rpc.js'), 'getLatestLedgerSequence').mockResolvedValue(10001);
-    vi.spyOn(await import('../../src/indexer/checkpoint.js'), 'getCheckpoint').mockResolvedValue(10000);
-
-    const app = buildServer();
-    const response = await app.inject({ method: 'GET', url: '/health/ready' });
-    expect(response.statusCode).toBe(503);
-    const body = response.json();
-    expect(body.status).toBe('error');
-    expect(body.reason).toBe('indexer_lagging');
-    expect(body.lag).toBe(1);
-    expect(body.threshold).toBe(0);
-
-    await app.close();
-
-    if (original === undefined) delete process.env.INDEXER_LAG_THRESHOLD;
-    else process.env.INDEXER_LAG_THRESHOLD = original;
+    try {
+      expect(() => buildServer()).toThrow(
+        'INDEXER_LAG_THRESHOLD must be a non-negative integer, received "abc"',
+      );
+    } finally {
+      if (original === undefined) delete process.env.INDEXER_LAG_THRESHOLD;
+      else process.env.INDEXER_LAG_THRESHOLD = original;
+    }
   });
 });
