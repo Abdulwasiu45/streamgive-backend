@@ -13,6 +13,7 @@
     "lint": "eslint .",
     "format": "prettier --check .",
     "format:fix": "prettier --write .",
+    "check": "npm run lint && npm run typecheck && npm run format && npm test",
     "typecheck": "tsc --noEmit",
     "test": "vitest run --passWithNoTests",
     "test:unit": "vitest run --project unit --passWithNoTests",
