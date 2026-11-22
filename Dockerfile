@@ -1,6 +1,12 @@
-# ---- build: compile TS (and the generated Prisma client) to dist/ ----
-FROM node:22-slim AS build
+# ---- shared runtime libraries ----
+FROM node:22-slim AS base
 WORKDIR /app
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends openssl \
+  && rm -rf /var/lib/apt/lists/*
+
+# ---- build: compile TS (and the generated Prisma client) to dist/ ----
+FROM base AS build
 
 # Copied separately from the rest of the source so `npm ci` — and its
 # postinstall `prisma generate`, which needs the schema — is cached across
@@ -14,8 +20,7 @@ COPY . .
 RUN npm run build
 
 # ---- runtime: production deps only, non-root, no build tooling ----
-FROM node:22-slim AS runtime
-WORKDIR /app
+FROM base AS runtime
 ARG GIT_COMMIT=unknown
 ARG BUILD_TIME=
 ENV NODE_ENV=production GIT_COMMIT=${GIT_COMMIT} BUILD_TIME=${BUILD_TIME}
@@ -30,6 +35,7 @@ COPY --chown=streamgive:nodejs package.json package-lock.json ./
 RUN npm ci --omit=dev --ignore-scripts
 
 COPY --from=build --chown=streamgive:nodejs /app/dist ./dist
+COPY --from=build --chown=streamgive:nodejs /app/src/generated/prisma/*.so.node ./dist/generated/prisma/
 
 USER streamgive
 
