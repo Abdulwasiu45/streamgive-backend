@@ -27,6 +27,8 @@ without knowing the API version.
 
 See the [API reference](docs/API.md) for every endpoint, its parameters,
 authentication requirements, and response examples.
+See the [documentation index](docs/README.md) for all project guides and
+reference documents.
 
 Interactive API documentation via Swagger UI is available at `/docs` (e.g.
 `http://localhost:3000/docs` in local development), and the OpenAPI JSON document
