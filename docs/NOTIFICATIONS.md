@@ -5,13 +5,13 @@ notification it emits (see [Webhook destinations](#webhook-destinations)).
 Every body is discriminated by its `type` field. The matching TypeScript definitions live in
 [`src/notifications/types.ts`](../src/notifications/types.ts).
 
-All events may include an optional `eventId` — the on-chain event id used to
-deduplicate deliveries and to retry failed sends. Each webhook request also
-includes an `x-streamgive-delivery-id` and an epoch-seconds
-`x-streamgive-timestamp`. When a destination secret is configured, the
-`x-streamgive-signature` header contains a versioned HMAC over the timestamp,
-delivery id, and exact request body. See [signature verification](#signature-verification)
-below.
+On-chain events include an `eventId` — the on-chain event id used to
+deduplicate deliveries and to retry failed sends. API-originated application
+events do not include an `eventId`. Each webhook request also includes an
+`x-streamgive-delivery-id` and an epoch-seconds `x-streamgive-timestamp`.
+When a destination secret is configured, the `x-streamgive-signature` header
+contains a versioned HMAC over the timestamp, delivery id, and exact request
+body. See [signature verification](#signature-verification) below.
 
 For receiver-side guidance — signature verification, answering within the
 timeout, retries, ordering and idempotency — see
@@ -115,8 +115,7 @@ Emitted when an NGO application is submitted through the API.
   "type": "application_submitted",
   "applicationId": "clx1y2z3...",
   "ownerAddress": "GABC...",
-  "name": "Red Cross",
-  "eventId": "0000000100-0000000000"
+  "name": "Red Cross"
 }
 ```
 
@@ -130,8 +129,7 @@ Emitted when an admin approves or rejects an NGO application.
   "applicationId": "clx1y2z3...",
   "ownerAddress": "GABC...",
   "status": "APPROVED",
-  "reviewNote": "Verified against public records.",
-  "eventId": "0000000100-0000000000"
+  "reviewNote": "Verified against public records."
 }
 ```
 
