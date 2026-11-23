@@ -2,6 +2,10 @@
 FROM node:22-slim AS build
 WORKDIR /app
 
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends openssl \
+  && rm -rf /var/lib/apt/lists/*
+
 # Copied separately from the rest of the source so `npm ci` — and its
 # postinstall `prisma generate`, which needs the schema — is cached across
 # builds unless dependencies or the schema actually change.
@@ -19,6 +23,10 @@ WORKDIR /app
 ARG GIT_COMMIT=unknown
 ARG BUILD_TIME=
 ENV NODE_ENV=production GIT_COMMIT=${GIT_COMMIT} BUILD_TIME=${BUILD_TIME}
+
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends openssl \
+  && rm -rf /var/lib/apt/lists/*
 
 RUN addgroup --system --gid 1001 nodejs \
   && adduser --system --uid 1001 --ingroup nodejs streamgive
