@@ -648,6 +648,46 @@ describe('startIndexer stop behavior', () => {
     }
   });
 
+  it('uses separate Postgres connections to keep a second worker idle until the first releases the lock', async () => {
+    process.env.DONATION_VAULT_CONTRACT_ID = mocks.contractId;
+    process.env.INDEXER_POLL_INTERVAL_MS = '10000';
+    const actualLock = await vi.importActual<typeof import('../../src/indexer/lock.js')>(
+      '../../src/indexer/lock.js',
+    );
+    mocks.tryAcquireIndexerLock.mockImplementation(actualLock.tryAcquireIndexerLock);
+    mocks.getLatestLedgerSequence.mockClear();
+    mocks.getEvents.mockClear();
+    mocks.getCheckpointState.mockResolvedValue({ lastLedger: 100 });
+    mocks.getLatestLedgerSequence.mockResolvedValue(101);
+    mocks.getEvents.mockResolvedValue({ events: [], latestLedger: 101 });
+
+    let stopFirst: (() => Promise<void>) | undefined;
+    let stopSecond: (() => Promise<void>) | undefined;
+    try {
+      const firstWorker = await freshIndexer();
+      stopFirst = firstWorker.startIndexer(async () => {});
+      await vi.waitFor(() => {
+        expect(mocks.getLatestLedgerSequence).toHaveBeenCalledTimes(1);
+      });
+
+      process.env.INDEXER_POLL_INTERVAL_MS = '25';
+      const secondWorker = await freshIndexer();
+      stopSecond = secondWorker.startIndexer(async () => {});
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      expect(mocks.getLatestLedgerSequence).toHaveBeenCalledTimes(1);
+
+      await stopFirst();
+      stopFirst = undefined;
+
+      await vi.waitFor(() => {
+        expect(mocks.getLatestLedgerSequence).toHaveBeenCalledTimes(2);
+      });
+    } finally {
+      await stopSecond?.();
+      await stopFirst?.();
+    }
+  });
+
   it('recovers when the checkpoint is outside the RPC retention window', async () => {
     process.env.DONATION_VAULT_CONTRACT_ID = mocks.contractId;
 
@@ -655,11 +695,9 @@ describe('startIndexer stop behavior', () => {
       .mockReset()
       .mockResolvedValue({ lastLedger: 500, lastEventId: undefined });
     mocks.getLatestLedgerSequence.mockReset().mockResolvedValue(10000);
-    mocks.getEvents
-      .mockReset()
-      .mockRejectedValueOnce({
-        message: 'startLedger must be within the ledger range [9000, 10000]',
-      });
+    mocks.getEvents.mockReset().mockRejectedValueOnce({
+      message: 'startLedger must be within the ledger range [9000, 10000]',
+    });
     mocks.saveCheckpoint.mockReset().mockResolvedValue(undefined);
 
     const { pollOnce } = await freshIndexer();
