@@ -1,7 +1,6 @@
 generator client {
   provider = "prisma-client"
   output   = "../src/generated/prisma"
-  previewFeatures = ["driverAdapters"]
 
   // Pinned rather than inferred. Prisma decides this from the surrounding
   // project when it is not set, and the Docker build runs `prisma generate`
@@ -14,7 +13,6 @@ generator client {
 
 datasource db {
   provider = "postgresql"
-  url      = env("DATABASE_URL")
 }
 
 model Donor {
