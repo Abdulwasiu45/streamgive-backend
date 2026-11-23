@@ -71,7 +71,6 @@ npm test
 All three must pass with no errors. Then open a PR against `main` and link the
 relevant issue.
 
-
 ---
 
 ## Dependency Audit Triage

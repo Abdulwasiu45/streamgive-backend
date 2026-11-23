@@ -69,7 +69,7 @@ describe('GET /v1/indexer/status (#59, #256)', () => {
 
   it('returns real checkpoint, latest ledger, and lag when configured', async () => {
     process.env.WATCHED_CONTRACT_IDS = 'C_TESTCONTRACT123';
-    
+
     // Seed a specific checkpoint ledger in the database
     await saveCheckpoint(123450);
 
@@ -85,7 +85,7 @@ describe('GET /v1/indexer/status (#59, #256)', () => {
 
     expect(response.statusCode).toBe(200);
     const body = response.json();
-    
+
     // Assert exact values to ensure the endpoint reads real data, not stubs.
     // This test would fail if the implementation returned hardcoded placeholders.
     expect(body.configured).toBe(true);

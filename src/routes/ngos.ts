@@ -86,9 +86,7 @@ function committedAmount(stream: {
 /** Lookup query; `address` must be a Stellar G... public key. */
 const lookupQuerySchema = z.object({
   // Stellar StrKey ed25519 public key: 'G' + 55 base32 (A-Z2-7) chars.
-  address: z
-    .string()
-    .regex(/^G[A-Z2-7]{55}$/),
+  address: z.string().regex(/^G[A-Z2-7]{55}$/),
 });
 
 /**
@@ -187,7 +185,7 @@ async function findNgoDetail(where: { id: string } | { ownerAddress: string }) {
       ...stream,
       onChainId: onChainId.toString(),
     })),
-    recentStreamsNextCursor: hasMoreRecentStreams ? recentStreams.at(-1)?.id ?? null : null,
+    recentStreamsNextCursor: hasMoreRecentStreams ? (recentStreams.at(-1)?.id ?? null) : null,
   };
 }
 
@@ -213,9 +211,7 @@ export async function ngoRoutes(app: FastifyInstance): Promise<void> {
     // the native uuid type), so both sides of the comparison are already text.
     // Casting to ::uuid would produce "operator does not exist: text = uuid".
     // Use an explicit ::text cast on the parameter to keep the types aligned.
-    const cursorFilter = cursor
-      ? Prisma.sql`${cursor}::text`
-      : Prisma.sql`NULL::text`;
+    const cursorFilter = cursor ? Prisma.sql`${cursor}::text` : Prisma.sql`NULL::text`;
 
     const rows = await prisma.$queryRaw<NgoListRow[]>`
       WITH cursor_ngo AS (
@@ -397,9 +393,7 @@ export async function ngoRoutes(app: FastifyInstance): Promise<void> {
     const page = hasMore ? rows.slice(0, limit) : rows;
     const donors = page.map(({ streams, ...donor }) => ({
       ...donor,
-      totalCommitted: streams
-        .reduce((sum, stream) => sum + committedAmount(stream), 0n)
-        .toString(),
+      totalCommitted: streams.reduce((sum, stream) => sum + committedAmount(stream), 0n).toString(),
       committedByToken: committedTotalsByToken(streams),
     }));
 
@@ -446,7 +440,9 @@ export async function ngoRoutes(app: FastifyInstance): Promise<void> {
 
     const parsedBody = updateNgoSchema.safeParse(request.body);
     if (!parsedBody.success) {
-      return reply.code(400).send({ error: 'invalid_request', details: parsedBody.error.flatten() });
+      return reply
+        .code(400)
+        .send({ error: 'invalid_request', details: parsedBody.error.flatten() });
     }
 
     const ngo = await prisma.ngo.findUnique({ where: { id: parsedParams.data.id } });

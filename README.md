@@ -16,10 +16,10 @@ serves the data that powers the frontend.
 
 Routes are split into two groups:
 
-| Prefix | Routes |
-|--------|--------|
-| `/v1`  | NGOs, streams, donors, impact, NGO applications, indexer status |
-| _(none)_ | `GET /health`, `GET /health/ready`, `GET /metrics` |
+| Prefix   | Routes                                                          |
+| -------- | --------------------------------------------------------------- |
+| `/v1`    | NGOs, streams, donors, impact, NGO applications, indexer status |
+| _(none)_ | `GET /health`, `GET /health/ready`, `GET /metrics`              |
 
 `GET /v1/health` is **not** a valid route and returns 404. Health checks and
 metrics sit at the root so load balancers and uptime monitors can reach them
@@ -103,13 +103,13 @@ The timestamp must be within ±5 minutes of the server's clock. The unit is **mi
 
 ### Error codes
 
-| Error | Status | Meaning |
-|---|---|---|
-| `unauthorized` | 401 | Missing or invalid headers, address not on allow-list, or signature did not verify |
-| `stale_signature` | 401 | Timestamp is malformed or outside the ±5-minute replay window |
-| `timestamp_unit_mismatch` | 401 | Timestamp looks like seconds (< 10^11); send milliseconds |
-| `replayed_signature` | 401 | The same address+timestamp+method+url has already been used in this window |
-| `admin_auth_not_configured` | 503 | Neither `ADMIN_ADDRESS` nor `ADMIN_ADDRESSES` is set |
+| Error                       | Status | Meaning                                                                            |
+| --------------------------- | ------ | ---------------------------------------------------------------------------------- |
+| `unauthorized`              | 401    | Missing or invalid headers, address not on allow-list, or signature did not verify |
+| `stale_signature`           | 401    | Timestamp is malformed or outside the ±5-minute replay window                      |
+| `timestamp_unit_mismatch`   | 401    | Timestamp looks like seconds (< 10^11); send milliseconds                          |
+| `replayed_signature`        | 401    | The same address+timestamp+method+url has already been used in this window         |
+| `admin_auth_not_configured` | 503    | Neither `ADMIN_ADDRESS` nor `ADMIN_ADDRESSES` is set                               |
 
 ## Local development
 
@@ -176,11 +176,7 @@ function isFromStreamGive(rawBody, signatureHeader, timestamp, deliveryId, secre
   if (!signatureHeader || !timestamp || !deliveryId) return false;
   const match = /^v1=([0-9a-f]{64})$/.exec(signatureHeader);
   const seconds = Number(timestamp);
-  if (
-    !match ||
-    !Number.isSafeInteger(seconds) ||
-    Math.abs(Date.now() / 1000 - seconds) > 300
-  ) {
+  if (!match || !Number.isSafeInteger(seconds) || Math.abs(Date.now() / 1000 - seconds) > 300) {
     return false;
   }
 

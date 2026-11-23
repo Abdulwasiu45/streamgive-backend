@@ -8,9 +8,7 @@ const DEFAULT_RETENTION_DAYS = 90;
 
 function retentionDays(): number {
   const configured = Number(process.env.LOG_RETENTION_DAYS);
-  return Number.isSafeInteger(configured) && configured > 0
-    ? configured
-    : DEFAULT_RETENTION_DAYS;
+  return Number.isSafeInteger(configured) && configured > 0 ? configured : DEFAULT_RETENTION_DAYS;
 }
 
 export async function pruneOldLogs(

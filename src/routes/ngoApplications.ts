@@ -8,7 +8,10 @@ import { prisma } from '../db.js';
 import { requireAdminSignature, sep53Hash } from '../middleware/adminAuth.js';
 import { requireOwnerSignature } from '../middleware/ownerAuth.js';
 import { notify } from '../notifications/service.js';
-import { sendContactVerification, verifyContactToken } from '../notifications/contactVerification.js';
+import {
+  sendContactVerification,
+  verifyContactToken,
+} from '../notifications/contactVerification.js';
 import {
   abandonIdempotentRequest,
   beginIdempotentRequest,
@@ -328,8 +331,7 @@ export async function ngoApplicationRoutes(app: FastifyInstance): Promise<void> 
   app.get('/ngo-applications/verify-contact-email', async (request, reply) => {
     const parsed = contactVerificationTokenSchema.safeParse(request.query);
     if (!parsed.success) return reply.code(400).send({ error: 'invalid_or_expired_token' });
-    const action =
-      `/v1/ngo-applications/verify-contact-email?token=${encodeURIComponent(parsed.data.token)}`;
+    const action = `/v1/ngo-applications/verify-contact-email?token=${encodeURIComponent(parsed.data.token)}`;
     return reply
       .header('cache-control', 'no-store')
       .type('text/html; charset=utf-8')

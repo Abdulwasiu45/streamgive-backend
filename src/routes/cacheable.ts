@@ -4,7 +4,7 @@ import type { FastifyReply, FastifyRequest } from 'fastify';
 const PUBLIC_MAX_AGE_SECONDS = 30;
 
 function matchesIfNoneMatch(header: string | string[] | undefined, etag: string): boolean {
-  const candidates = Array.isArray(header) ? header : header?.split(',') ?? [];
+  const candidates = Array.isArray(header) ? header : (header?.split(',') ?? []);
   return candidates.some((candidate) => {
     const normalized = candidate.trim().replace(/^W\//, '');
     return normalized === '*' || normalized === etag;

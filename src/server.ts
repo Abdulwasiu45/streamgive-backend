@@ -110,10 +110,7 @@ export interface BuildServerOptions {
  */
 export function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(
-      () => reject(new Error(`health check timed out after ${ms} ms`)),
-      ms,
-    );
+    const timer = setTimeout(() => reject(new Error(`health check timed out after ${ms} ms`)), ms);
     promise.then(
       (v) => {
         clearTimeout(timer);
@@ -136,9 +133,7 @@ export function buildServer(options?: BuildServerOptions) {
   const slowRequestThresholdMs = cfg.SLOW_REQUEST_THRESHOLD_MS;
   const maintenanceMode = cfg.MAINTENANCE_MODE;
   const trustProxySetting =
-    options?.trustProxy !== undefined
-      ? options.trustProxy
-      : parseTrustProxy(cfg.TRUST_PROXY);
+    options?.trustProxy !== undefined ? options.trustProxy : parseTrustProxy(cfg.TRUST_PROXY);
 
   const app = Fastify({
     ...requestIdOptions,
@@ -321,9 +316,7 @@ export function buildServer(options?: BuildServerOptions) {
   const rootRateLimitedRoutes = new Set(['/metrics', '/health', '/health/ready']);
   app.addHook('onRequest', async (request, reply) => {
     if (rootRateLimitedRoutes.has(request.routeOptions.url ?? '')) {
-      await request.server.rateLimit
-        .call(request.server)
-        .call(request.server, request, reply);
+      await request.server.rateLimit.call(request.server).call(request.server, request, reply);
     }
   });
 

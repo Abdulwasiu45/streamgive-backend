@@ -71,7 +71,8 @@ export async function requireOwnerSignature(
     const candidates = [Buffer.from(signature, 'base64'), Buffer.from(signature, 'hex')];
     valid = candidates.some(
       (candidate) =>
-        candidate.length === ED25519_SIGNATURE_BYTES && keypair.verify(sep53Hash(message), candidate),
+        candidate.length === ED25519_SIGNATURE_BYTES &&
+        keypair.verify(sep53Hash(message), candidate),
     );
   } catch {
     valid = false;
