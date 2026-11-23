@@ -16,17 +16,6 @@ process, and more) see the
 
 ---
 
-## Dev container
-
-With Docker and the VS Code Dev Containers extension installed, open the
-repository and run **Dev Containers: Reopen in Container**. The container
-installs Node dependencies, starts Postgres, creates `.env.test`, and applies
-the test database migrations. When setup finishes, run `npm test`. The app
-container has its development `DATABASE_URL` preconfigured; run
-`npm run db:deploy` before starting the API if you need the development schema.
-
----
-
 ## Local setup
 
 ```bash
@@ -70,23 +59,6 @@ npm test
 ```
 
 ---
-
-## Pre-commit checks
-
-After `npm install`, Husky runs ESLint and Prettier on staged JavaScript and
-TypeScript files, and Prettier on staged JSON, Markdown, and YAML files.
-
-To skip the hook in an emergency, set `HUSKY=0` for that commit:
-
-```bash
-HUSKY=0 git commit -m "your message"
-```
-
-In PowerShell, use:
-
-```powershell
-$env:HUSKY = "0"; git commit -m "your message"; Remove-Item Env:HUSKY
-```
 
 ## Before opening a pull request
 
