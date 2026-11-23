@@ -659,7 +659,16 @@ describe('startIndexer stop behavior', () => {
     mocks.getEvents.mockClear();
     mocks.getCheckpointState.mockResolvedValue({ lastLedger: 100 });
     mocks.getLatestLedgerSequence.mockResolvedValue(101);
-    mocks.getEvents.mockResolvedValue({ events: [], latestLedger: 101 });
+    let eventFetches = 0;
+    let releaseSecondPoll!: () => void;
+    const secondPollBlocked = new Promise<void>((resolve) => {
+      releaseSecondPoll = resolve;
+    });
+    mocks.getEvents.mockImplementation(async () => {
+      eventFetches += 1;
+      if (eventFetches === 2) await secondPollBlocked;
+      return { events: [], latestLedger: 101 };
+    });
 
     let stopFirst: (() => Promise<void>) | undefined;
     let stopSecond: (() => Promise<void>) | undefined;
@@ -682,6 +691,10 @@ describe('startIndexer stop behavior', () => {
       await vi.waitFor(() => {
         expect(mocks.getLatestLedgerSequence).toHaveBeenCalledTimes(2);
       });
+      const stoppingSecond = stopSecond();
+      releaseSecondPoll();
+      await stoppingSecond;
+      stopSecond = undefined;
     } finally {
       await stopSecond?.();
       await stopFirst?.();

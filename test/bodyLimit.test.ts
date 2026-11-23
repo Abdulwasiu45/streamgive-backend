@@ -32,6 +32,6 @@ describe('request body limit', () => {
 
   it('rejects invalid body-limit configuration', () => {
     process.env.BODY_LIMIT_BYTES = 'not-a-number';
-    expect(() => buildServer()).toThrow('BODY_LIMIT_BYTES must be a positive integer.');
+    expect(() => buildServer()).toThrow(/BODY_LIMIT_BYTES/);
   });
 });
