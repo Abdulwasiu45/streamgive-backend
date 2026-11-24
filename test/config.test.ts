@@ -126,11 +126,7 @@ describe('parseRpcUrls', () => {
   it('parses a comma-separated list of http(s) URLs in order', () => {
     expect(
       parseRpcUrls('https://rpc-1.example.com, https://rpc-2.example.com, http://localhost:8000'),
-    ).toEqual([
-      'https://rpc-1.example.com',
-      'https://rpc-2.example.com',
-      'http://localhost:8000',
-    ]);
+    ).toEqual(['https://rpc-1.example.com', 'https://rpc-2.example.com', 'http://localhost:8000']);
   });
 
   it('rejects invalid or non-http(s) URLs', () => {
@@ -173,6 +169,9 @@ describe('parseConfig', () => {
     expect(error.message).toContain('RATE_LIMIT_MAX');
     expect(error.message).toContain('RATE_LIMIT_WINDOW');
     expect(error.message).toContain('SOROBAN_RPC_URL');
+  });
+});
+
 describe('parseConfig numeric settings', () => {
   it('defaults RATE_LIMIT_APPLICATION_MAX and HEALTH_CHECK_TIMEOUT_MS when unset or blank', () => {
     for (const env of [{}, { RATE_LIMIT_APPLICATION_MAX: '  ', HEALTH_CHECK_TIMEOUT_MS: '' }]) {

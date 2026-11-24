@@ -35,10 +35,7 @@ describe('handleNgoRegistryEvent', () => {
 
   it('dispatches an ngo_registered notification on a register event', async () => {
     const owner = fakeAddress('E');
-    const event = makeEvent(
-      [symbolScVal('register'), addressScVal(owner)],
-      stringScVal('Oxfam'),
-    );
+    const event = makeEvent([symbolScVal('register'), addressScVal(owner)], stringScVal('Oxfam'));
 
     await handleNgoRegistryEvent(event);
 
@@ -57,7 +54,9 @@ describe('handleNgoRegistryEvent', () => {
     const owner = fakeAddress('B');
     await prisma.ngo.create({ data: { ownerAddress: owner, name: 'Doctors Without Borders' } });
 
-    await handleNgoRegistryEvent(makeEvent([symbolScVal('approved'), addressScVal(owner)], stringScVal('')));
+    await handleNgoRegistryEvent(
+      makeEvent([symbolScVal('approved'), addressScVal(owner)], stringScVal('')),
+    );
 
     const ngo = await prisma.ngo.findUnique({ where: { ownerAddress: owner } });
     expect(ngo?.verified).toBe(true);
@@ -95,7 +94,9 @@ describe('handleNgoRegistryEvent', () => {
     // Should not throw even though no NGO row exists for this address —
     // updateMany (not update) is exactly for this case.
     await expect(
-      handleNgoRegistryEvent(makeEvent([symbolScVal('approved'), addressScVal(owner)], stringScVal(''))),
+      handleNgoRegistryEvent(
+        makeEvent([symbolScVal('approved'), addressScVal(owner)], stringScVal('')),
+      ),
     ).resolves.not.toThrow();
 
     const ngo = await prisma.ngo.findUnique({ where: { ownerAddress: owner } });
@@ -112,12 +113,16 @@ describe('handleNgoRegistryEvent', () => {
     const owner = fakeAddress('D');
     await prisma.ngo.create({ data: { ownerAddress: owner, name: 'UNICEF' } });
 
-    await handleNgoRegistryEvent(makeEvent([symbolScVal('approved'), addressScVal(owner)], stringScVal('')));
+    await handleNgoRegistryEvent(
+      makeEvent([symbolScVal('approved'), addressScVal(owner)], stringScVal('')),
+    );
     let ngo = await prisma.ngo.findUnique({ where: { ownerAddress: owner } });
     expect(ngo?.verified).toBe(true);
 
     const txHash = '1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef';
-    const event = makeEvent([symbolScVal('revoked'), addressScVal(owner)], stringScVal(''), { txHash });
+    const event = makeEvent([symbolScVal('revoked'), addressScVal(owner)], stringScVal(''), {
+      txHash,
+    });
     await handleNgoRegistryEvent(event);
     ngo = await prisma.ngo.findUnique({ where: { ownerAddress: owner } });
     expect(ngo?.verified).toBe(false);

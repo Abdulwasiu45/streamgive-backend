@@ -58,11 +58,7 @@ function isFromStreamGive(rawBody, signatureHeader, timestamp, deliveryId, secre
   if (!signatureHeader || rawBody === undefined || !timestamp || !deliveryId) return false;
   const match = /^v1=([0-9a-f]{64})$/.exec(signatureHeader);
   const seconds = Number(timestamp);
-  if (
-    !match ||
-    !Number.isSafeInteger(seconds) ||
-    Math.abs(Date.now() / 1000 - seconds) > 300
-  ) {
+  if (!match || !Number.isSafeInteger(seconds) || Math.abs(Date.now() / 1000 - seconds) > 300) {
     return false;
   }
 

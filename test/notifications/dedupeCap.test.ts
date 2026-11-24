@@ -12,13 +12,7 @@ const deliveryRows = new Map<string, Record<string, unknown>>();
 const deliveryByEvent = new Map<string, string>();
 let nextDeliveryId = 0;
 const deliveryUpsert = vi.fn(
-  ({
-    where,
-    create,
-  }: {
-    where: { deliveryKey: string };
-    create: Record<string, unknown>;
-  }) => {
+  ({ where, create }: { where: { deliveryKey: string }; create: Record<string, unknown> }) => {
     const key = where.deliveryKey;
     const existingId = deliveryByEvent.get(key);
     if (existingId) return deliveryRows.get(existingId);
@@ -37,15 +31,15 @@ const deliveryUpsert = vi.fn(
     return row;
   },
 );
-const deliveryFindUnique = vi.fn(({ where }: { where: { id: string } }) =>
-  deliveryRows.get(where.id) ?? null,
+const deliveryFindUnique = vi.fn(
+  ({ where }: { where: { id: string } }) => deliveryRows.get(where.id) ?? null,
 );
 const deliveryUpdateMany = vi.fn(({ where }: { where: { id: string } }) => {
-    const row = deliveryRows.get(where.id);
-    if (!row) return { count: 0 };
-    row.attempts = Number(row.attempts) + 1;
-    row.lockedUntil = new Date(Date.now() + 60_000);
-    return { count: 1 };
+  const row = deliveryRows.get(where.id);
+  if (!row) return { count: 0 };
+  row.attempts = Number(row.attempts) + 1;
+  row.lockedUntil = new Date(Date.now() + 60_000);
+  return { count: 1 };
 });
 const deliveryUpdate = vi.fn(
   ({ where, data }: { where: { id: string }; data: Record<string, unknown> }) => {

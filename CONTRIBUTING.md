@@ -63,14 +63,11 @@ npm test
 ## Before opening a pull request
 
 ```bash
-npm run lint
-npm run typecheck
-npm test
+npm run check
 ```
 
-All three must pass with no errors. Then open a PR against `main` and link the
-relevant issue.
-
+Lint, type checking, formatting, and tests must all pass with no errors. Then
+open a PR against `main` and link the relevant issue.
 
 ---
 

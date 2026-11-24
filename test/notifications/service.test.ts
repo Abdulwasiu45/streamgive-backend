@@ -209,7 +209,10 @@ describe('notify', () => {
     expect(fetchSpy).toHaveBeenCalledTimes(1);
     expect(fetchSpy).toHaveBeenCalledWith(
       'https://8.8.8.8/one',
-      expect.objectContaining({ method: 'POST', body: JSON.stringify({ ...event, eventId: 'fanout-event-1' }) }),
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ ...event, eventId: 'fanout-event-1' }),
+      }),
     );
     const log = await prisma.notificationLog.findFirst({
       where: { eventId: 'fanout-event-1', channel: { startsWith: 'webhook:' }, success: true },

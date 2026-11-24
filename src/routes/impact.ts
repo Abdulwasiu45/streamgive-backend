@@ -15,7 +15,10 @@ export const MAX_TIMESERIES_DAYS = 90;
 const DEFAULT_TIMESERIES_DAYS = 30;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine((v) => !Number.isNaN(Date.parse(`${v}T00:00:00Z`)));
+const isoDate = z
+  .string()
+  .regex(/^\d{4}-\d{2}-\d{2}$/)
+  .refine((v) => !Number.isNaN(Date.parse(`${v}T00:00:00Z`)));
 const timeseriesQuerySchema = z.object({ from: isoDate.optional(), to: isoDate.optional() });
 
 type TimeseriesRow = {
@@ -34,10 +37,16 @@ export function resolveTimeseriesRange(
   query: { from?: string; to?: string },
   now: Date = new Date(),
 ): { from: string; to: string } | { error: 'invalid_range' | 'range_too_large' } {
-  const to = query.to ?? (query.from
-    ? utcDay(new Date(Date.parse(`${query.from}T00:00:00Z`) + (DEFAULT_TIMESERIES_DAYS - 1) * DAY_MS))
-    : utcDay(now));
-  const from = query.from ?? utcDay(new Date(Date.parse(`${to}T00:00:00Z`) - (DEFAULT_TIMESERIES_DAYS - 1) * DAY_MS));
+  const to =
+    query.to ??
+    (query.from
+      ? utcDay(
+          new Date(Date.parse(`${query.from}T00:00:00Z`) + (DEFAULT_TIMESERIES_DAYS - 1) * DAY_MS),
+        )
+      : utcDay(now));
+  const from =
+    query.from ??
+    utcDay(new Date(Date.parse(`${to}T00:00:00Z`) - (DEFAULT_TIMESERIES_DAYS - 1) * DAY_MS));
   const days = (Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / DAY_MS + 1;
   if (days < 1) return { error: 'invalid_range' };
   if (days > MAX_TIMESERIES_DAYS) return { error: 'range_too_large' };
@@ -110,7 +119,7 @@ export async function impactRoutes(app: FastifyInstance): Promise<void> {
     {
       schema: {
         tags: ['Impact'],
-        summary: 'Get a daily time series of one NGO\'s streams and withdrawals',
+        summary: "Get a daily time series of one NGO's streams and withdrawals",
         params: {
           type: 'object',
           properties: { ngoId: { type: 'string', format: 'uuid' } },
@@ -138,9 +147,7 @@ export async function impactRoutes(app: FastifyInstance): Promise<void> {
       }
       const range = resolveTimeseriesRange(parsedQuery.data);
       if ('error' in range) {
-        return reply
-          .code(400)
-          .send({ error: range.error, maxDays: MAX_TIMESERIES_DAYS });
+        return reply.code(400).send({ error: range.error, maxDays: MAX_TIMESERIES_DAYS });
       }
       const { ngoId } = parsedParams.data;
 
@@ -270,8 +277,7 @@ export async function impactRoutes(app: FastifyInstance): Promise<void> {
       const percentScale = 1_000_000_000_000n;
       const platformSharePercent =
         platformCommitted > 0n
-          ? Number((ngoCommitted * 100n * percentScale) / platformCommitted) /
-            Number(percentScale)
+          ? Number((ngoCommitted * 100n * percentScale) / platformCommitted) / Number(percentScale)
           : 0;
 
       return sendPublicCacheable(request, reply, {
