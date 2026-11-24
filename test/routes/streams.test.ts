@@ -64,6 +64,75 @@ describe('GET /v1/streams', () => {
     await app.close();
   });
 
+  it('filters inclusively by creation date and combines the bounds with other filters', async () => {
+    const app = buildServer();
+    const donor = await prisma.donor.create({ data: { address: fakeAddress('A') } });
+    const otherDonor = await prisma.donor.create({ data: { address: fakeAddress('B') } });
+    const ngo = await prisma.ngo.create({
+      data: { ownerAddress: fakeAddress('C'), name: 'NGO', verified: true },
+    });
+    const start = new Date('2025-01-02T00:00:00.000Z');
+    const end = new Date('2025-01-03T00:00:00.000Z');
+
+    await prisma.stream.createMany({
+      data: [
+        {
+          onChainId: 1n,
+          donorId: donor.id,
+          ngoId: ngo.id,
+          tokenAddress: fakeAddress('D'),
+          rate: '1',
+          balance: '100',
+          withdrawn: '0',
+          createdAt: new Date('2025-01-01T23:59:59.999Z'),
+        },
+        ...[start, new Date('2025-01-02T12:00:00.000Z'), end].map(
+          (createdAt, index) => ({
+            onChainId: BigInt(index + 2),
+            donorId: donor.id,
+            ngoId: ngo.id,
+            tokenAddress: fakeAddress('D'),
+            rate: '1',
+            balance: '100',
+            withdrawn: '0',
+            createdAt,
+          }),
+        ),
+        {
+          onChainId: 5n,
+          donorId: donor.id,
+          ngoId: ngo.id,
+          tokenAddress: fakeAddress('D'),
+          rate: '1',
+          balance: '100',
+          withdrawn: '0',
+          createdAt: new Date('2025-01-03T00:00:00.001Z'),
+        },
+        {
+          onChainId: 6n,
+          donorId: otherDonor.id,
+          ngoId: ngo.id,
+          tokenAddress: fakeAddress('D'),
+          rate: '1',
+          balance: '100',
+          withdrawn: '0',
+          createdAt: new Date('2025-01-02T12:00:00.000Z'),
+        },
+      ],
+    });
+
+    const response = await app.inject({
+      method: 'GET',
+      url: `/v1/streams?donor=${donor.address}&createdAfter=${encodeURIComponent(start.toISOString())}&createdBefore=${encodeURIComponent(end.toISOString())}`,
+    });
+    expect(response.statusCode).toBe(200);
+    expect(
+      response.json().streams.map((stream: { onChainId: string }) => stream.onChainId),
+    ).toEqual(['4', '3', '2']);
+
+    await app.close();
+  });
+
   it('400s on a malformed donor address instead of matching nothing silently', async () => {
     const app = buildServer();
 
@@ -179,6 +248,8 @@ describe('GET /v1/streams', () => {
       limitTooLarge: 'limit=101',
       limitZero: 'limit=0',
       limitNotANumber: 'limit=abc',
+      createdAfter: 'createdAfter=not-a-date',
+      createdBefore: 'createdBefore=not-a-date',
     };
 
     for (const [name, query] of Object.entries(cases)) {

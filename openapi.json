@@ -424,7 +424,7 @@
         "tags": [
           "Streams"
         ],
-        "description": "Returns streams newest first, with optional filters and cursor pagination.",
+        "description": "Returns streams newest first, with optional filters and cursor pagination, including creation-date bounds.",
         "parameters": [
           {
             "schema": {
@@ -472,6 +472,24 @@
             },
             "in": "query",
             "name": "status",
+            "required": false
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "in": "query",
+            "name": "createdAfter",
+            "required": false
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "in": "query",
+            "name": "createdBefore",
             "required": false
           },
           {

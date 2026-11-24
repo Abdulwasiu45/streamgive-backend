@@ -27,6 +27,8 @@ without knowing the API version.
 
 See the [API reference](docs/API.md) for every endpoint, its parameters,
 authentication requirements, and response examples.
+See the [documentation index](docs/README.md) for all project guides and
+reference documents.
 
 Interactive API documentation via Swagger UI is available at `/docs` (e.g.
 `http://localhost:3000/docs` in local development), and the OpenAPI JSON document
@@ -96,6 +98,11 @@ METHOD:url:timestamp:bodyHash
 - **bodyHash** — lower-case hex SHA-256 of the raw request body, or the SHA-256 of an empty buffer (`e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`) for bodyless requests (GET, DELETE, etc.).
 
 Including the body hash in the signed payload prevents an attacker who intercepts a valid request from replaying it with a different body (e.g. a different `reviewNote`) inside the replay window.
+The [worked TypeScript signing example](src/scripts/signAdminRequest.ts)
+builds this payload and prints a ready-to-run `curl` command. Set
+`ADMIN_SECRET` and, when needed, `ADMIN_REQUEST_URL`,
+`ADMIN_REQUEST_METHOD`, or `ADMIN_REQUEST_BODY` in the environment before
+running it with `npx tsx src/scripts/signAdminRequest.ts`.
 
 ### Timestamp rules
 
