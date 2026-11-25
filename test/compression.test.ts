@@ -40,7 +40,7 @@ describe('response compression', () => {
     });
 
     expect(firstResponse.headers['content-encoding']).toBe('gzip');
-    expect(firstResponse.headers.vary).toContain('Accept-Encoding');
+    expect(firstResponse.headers.vary).toMatch(/accept-encoding/i);
     const etag = firstResponse.headers.etag;
     expect(etag).toBeDefined();
     if (etag === undefined) {
@@ -58,7 +58,7 @@ describe('response compression', () => {
 
     expect(cachedResponse.statusCode).toBe(304);
     expect(cachedResponse.headers.etag).toBe(etag);
-    expect(cachedResponse.headers.vary).toContain('Accept-Encoding');
+    expect(cachedResponse.headers.vary).toMatch(/accept-encoding/i);
     await app.close();
   });
 
