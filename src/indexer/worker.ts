@@ -4,6 +4,8 @@ import {
   recordIndexerEventsSkipped,
   recordIndexerPosition,
 } from '../metrics.js';
+import { DEFAULT_INDEXER_POLL_INTERVAL_MS } from '../config.js';
+import { envInt } from '../config/env.js';
 import { logger } from '../logger.js';
 import { getLatestLedgerSequence, rpcServer } from '../stellar/rpc.js';
 import { getCheckpointState, saveCheckpoint } from './checkpoint.js';
@@ -11,20 +13,16 @@ import { WATCHED_CONTRACT_IDS } from './contracts.js';
 import { recordDeadLetter } from './deadLetter.js';
 import { tryAcquireIndexerLock, type IndexerLock } from './lock.js';
 
-const POLL_INTERVAL_MS = Number(process.env.INDEXER_POLL_INTERVAL_MS ?? 5000);
-const START_LEDGER = process.env.INDEXER_START_LEDGER
-  ? Number(process.env.INDEXER_START_LEDGER)
-  : undefined;
-const MAX_EVENTS_PER_POLL = process.env.INDEXER_MAX_EVENTS_PER_POLL
-  ? Number(process.env.INDEXER_MAX_EVENTS_PER_POLL)
-  : undefined;
-
-if (
-  MAX_EVENTS_PER_POLL !== undefined &&
-  (!Number.isInteger(MAX_EVENTS_PER_POLL) || MAX_EVENTS_PER_POLL < 1)
-) {
-  throw new Error('INDEXER_MAX_EVENTS_PER_POLL must be a positive integer');
-}
+const POLL_INTERVAL_MS = envInt(process.env.INDEXER_POLL_INTERVAL_MS, 'INDEXER_POLL_INTERVAL_MS', {
+  defaultValue: DEFAULT_INDEXER_POLL_INTERVAL_MS,
+  min: 1,
+});
+const START_LEDGER = envInt(process.env.INDEXER_START_LEDGER, 'INDEXER_START_LEDGER', { min: 1 });
+const MAX_EVENTS_PER_POLL = envInt(
+  process.env.INDEXER_MAX_EVENTS_PER_POLL,
+  'INDEXER_MAX_EVENTS_PER_POLL',
+  { min: 1 },
+);
 
 /** Ceiling on the backed-off delay. Reached after ~7 consecutive failures at
  *  the default 5s interval, so a long outage still re-checks the endpoint

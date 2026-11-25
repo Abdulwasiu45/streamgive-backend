@@ -272,6 +272,61 @@ describe('Admin dead-letter routes', () => {
   });
 
   describe('Filtering by resolved status', () => {
+    it('combines unresolved filtering with pagination and rejects an out-of-range limit', async () => {
+      const app = buildServer();
+
+      for (const index of [1, 2, 4, 5]) {
+        await prisma.indexerDeadLetter.create({
+          data: createDeadLetterFixture(index, { resolvedAt: null }),
+        });
+      }
+      await prisma.indexerDeadLetter.create({
+        data: createDeadLetterFixture(3, { resolvedAt: new Date() }),
+      });
+
+      const page1Url = '/v1/admin/dead-letters?resolved=false&limit=2';
+      const page1Response = await app.inject({
+        method: 'GET',
+        url: page1Url,
+        headers: signAdminRequest(adminKeypair, 'GET', page1Url),
+      });
+
+      expect(page1Response.statusCode).toBe(200);
+      const page1Body = page1Response.json();
+      expect(page1Body.total).toBe(4);
+      expect(page1Body.deadLetters.map((d: { ledger: number }) => d.ledger)).toEqual([105, 104]);
+      expect(page1Body.hasMore).toBe(true);
+      expect(page1Body.nextCursor).not.toBeNull();
+
+      const page2Url = `/v1/admin/dead-letters?resolved=false&limit=2&cursor=${page1Body.nextCursor}`;
+      const page2Response = await app.inject({
+        method: 'GET',
+        url: page2Url,
+        headers: signAdminRequest(adminKeypair, 'GET', page2Url),
+      });
+
+      expect(page2Response.statusCode).toBe(200);
+      const page2Body = page2Response.json();
+      expect(page2Body.total).toBe(4);
+      expect(page2Body.deadLetters.map((d: { ledger: number }) => d.ledger)).toEqual([102, 101]);
+      expect(
+        page2Body.deadLetters.every((d: { resolvedAt: string | null }) => d.resolvedAt === null),
+      ).toBe(true);
+      expect(page2Body.hasMore).toBe(false);
+      expect(page2Body.nextCursor).toBeNull();
+
+      const invalidLimitUrl = '/v1/admin/dead-letters?resolved=false&limit=101';
+      const invalidLimitResponse = await app.inject({
+        method: 'GET',
+        url: invalidLimitUrl,
+        headers: signAdminRequest(adminKeypair, 'GET', invalidLimitUrl),
+      });
+      expect(invalidLimitResponse.statusCode).toBe(400);
+      expect(invalidLimitResponse.json()).toEqual({ error: 'invalid_request' });
+
+      await app.close();
+    });
+
     it('returns both resolved and unresolved dead letters when resolved is omitted', async () => {
       const app = buildServer();
 
