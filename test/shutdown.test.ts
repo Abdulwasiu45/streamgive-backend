@@ -8,6 +8,7 @@
  * process.exit(1) would be triggered on that path.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import Fastify from 'fastify';
 
 import { DEFAULT_SHUTDOWN_TIMEOUT_MS } from '../src/config.js';
 
@@ -68,6 +69,55 @@ describe('shutdown()', () => {
 
     expect(mockStopIndexer).toHaveBeenCalledOnce();
     expect(mockApp.close).toHaveBeenCalledOnce();
+  });
+
+  it('finishes an in-flight request before shutdown closes the server', async () => {
+    const server = Fastify({ logger: false });
+    let finishRequest!: () => void;
+    let markRequestStarted!: () => void;
+    const requestGate = new Promise<void>((resolve) => {
+      finishRequest = resolve;
+    });
+    const requestStarted = new Promise<void>((resolve) => {
+      markRequestStarted = resolve;
+    });
+    server.get('/slow', async () => {
+      markRequestStarted();
+      await requestGate;
+      return { finished: true };
+    });
+    await server.listen({ host: '127.0.0.1', port: 0 });
+
+    const address = server.server.address();
+    if (address === null || typeof address === 'string') {
+      throw new Error('expected the test server to listen on a TCP port');
+    }
+
+    mockApp.close.mockImplementation(() => server.close());
+    const responsePromise = fetch(`http://127.0.0.1:${address.port}/slow`);
+    await requestStarted;
+
+    let shutdownFinished = false;
+    const shutdownPromise = shutdown('SIGTERM').then(() => {
+      shutdownFinished = true;
+    });
+
+    try {
+      expect(shutdownFinished).toBe(false);
+      finishRequest();
+
+      const response = await responsePromise;
+      expect(response.status).toBe(200);
+      await expect(response.json()).resolves.toEqual({ finished: true });
+
+      await shutdownPromise;
+      expect(shutdownFinished).toBe(true);
+    } finally {
+      finishRequest();
+      if (server.server.listening) {
+        await server.close();
+      }
+    }
   });
 
   it('logs the signal that triggered the shutdown', async () => {

@@ -257,9 +257,12 @@ describe('GET /health/ready', () => {
 
   it('rejects a non-numeric INDEXER_LAG_THRESHOLD during configuration validation', () => {
     const original = process.env.INDEXER_LAG_THRESHOLD;
+    process.env.INDEXER_LAG_THRESHOLD = 'abc';
+
     try {
-      process.env.INDEXER_LAG_THRESHOLD = 'abc';
-      expect(() => buildServer()).toThrow(/INDEXER_LAG_THRESHOLD/);
+      expect(() => buildServer()).toThrow(
+        'INDEXER_LAG_THRESHOLD must be a non-negative integer, received "abc"',
+      );
     } finally {
       if (original === undefined) delete process.env.INDEXER_LAG_THRESHOLD;
       else process.env.INDEXER_LAG_THRESHOLD = original;
