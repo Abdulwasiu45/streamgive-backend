@@ -404,6 +404,25 @@
         }
       }
     },
+    "/v1/donors/{address}/activity": {
+      "get": {
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "address",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
     "/v1/streams": {
       "get": {
         "summary": "List donation streams",
