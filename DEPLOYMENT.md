@@ -137,7 +137,9 @@ whole allowance. That budget covers **one** free service, not several.
 
 Several pieces of state live in process memory. Each one behaves differently
 when a second replica runs, and when the process restarts. The table lists
-what the code does today.
+what the code does today. For the full guide, including what is shared
+through the database, the risks and the recommended settings, see
+[docs/SCALING.md](docs/SCALING.md).
 
 | State                                     | Where                                                                                                                                                                                                | Second replica                                                                                                                                                                    | Restart                                                                                                |
 | ----------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |

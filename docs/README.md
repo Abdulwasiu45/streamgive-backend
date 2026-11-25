@@ -15,6 +15,7 @@ Guides and reference documents for the StreamGive backend are listed below.
 - [Indexer guide](INDEXER.md) — Event polling, checkpoints, backfills, and recovery behavior.
 - [Metrics reference](METRICS.md) — Prometheus metrics and monitoring guidance.
 - [Production migrations](PRODUCTION-MIGRATIONS.md) — Applying database migrations safely in production.
+- [Running more than one instance](SCALING.md) — Shared and per-instance state, risks, and recommended settings for scaling out.
 - [Operations runbook](RUNBOOK.md) — Operational checks and responses to common incidents.
 - [Testing guide](TESTING.md) — Test suites, local database setup, and test commands.
 
