@@ -235,3 +235,23 @@ function verifyNotification(rawBody, headers, secret) {
   return received.length === expected.length && timingSafeEqual(received, expected);
 }
 ```
+
+## Donor email alerts
+
+A donor can ask for an email when one of their streams is created or ends.
+
+1. `POST /v1/donors/:address/email-alerts` with `{ "email": "..." }`, signed with the
+   owner headers (`x-owner-address`, `x-owner-timestamp`, `x-owner-signature`) of the
+   same wallet address. A confirmation link is emailed; nothing is alerted until it is
+   used. Repeating the request within five minutes sends no new email.
+2. The link opens a confirmation form (`GET /v1/donor-email-alerts/verify?token=...`)
+   and the button redeems it (`POST`), so mail scanners cannot confirm by prefetching.
+3. Only verified addresses are alerted. An alert carries a summary only (the stream
+   number, the NGO name and what happened), never amounts or addresses, plus a one
+   click unsubscribe link (`GET`, or `POST` for the `List-Unsubscribe-Post` header) in
+   the body and the `List-Unsubscribe` header.
+
+Email uses the same provider settings as the NGO contact emails (`RESEND_API_KEY`,
+`NOTIFY_EMAIL_FROM`, `API_PUBLIC_URL`). Top-up and running-low alerts need indexer
+events that are not handled yet, so only `stream_created` and `stream_cancelled` send mail.
+

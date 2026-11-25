@@ -294,3 +294,23 @@ model StreamEvent {
   @@index([ledger])
   @@map("stream_events")
 }
+
+/// An email address a donor registered for alerts about their streams. Alerts go only to rows
+/// with `verifiedAt` set. `unsubscribeToken` is the secret in every email's one click
+/// unsubscribe link; `verificationTokenHash` is the SHA-256 of the one-time confirmation token.
+model DonorEmailAlert {
+  id                     String    @id @default(uuid())
+  donorAddress           String    @map("donor_address")
+  email                  String
+  verificationTokenHash  String?   @unique @map("verification_token_hash")
+  verificationExpiresAt  DateTime? @map("verification_expires_at")
+  lastVerificationSentAt DateTime? @map("last_verification_sent_at")
+  verifiedAt             DateTime? @map("verified_at")
+  unsubscribeToken       String    @unique @map("unsubscribe_token")
+  createdAt              DateTime  @default(now()) @map("created_at")
+  updatedAt              DateTime  @updatedAt @map("updated_at")
+
+  @@unique([donorAddress, email])
+  @@index([donorAddress])
+  @@map("donor_email_alerts")
+}

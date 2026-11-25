@@ -6,6 +6,7 @@ import { recordNotificationDelivery } from '../metrics.js';
 import { DEFAULT_NOTIFY_WEBHOOK_TIMEOUT_MS } from '../config.js';
 import { envInt } from '../config/env.js';
 import type { NotificationEvent } from './types.js';
+import { notifyDonorAlerts } from './donorAlerts.js';
 import { isSafeWebhookUrl } from './urlValidation.js';
 
 const deliveredEventIds = new Set<string>();
@@ -384,7 +385,11 @@ export async function notify(event: NotificationEvent): Promise<void> {
     if (deliveredEventIds.has(event.eventId)) return;
   }
 
-  const [webhookResult] = await Promise.all([notifyWebhook(event), notifyEmail(event)]);
+  const [webhookResult] = await Promise.all([
+    notifyWebhook(event),
+    notifyEmail(event),
+    notifyDonorAlerts(event),
+  ]);
 
   // Mark delivered only after successful delivery
   if (event.eventId && webhookResult.success) {
