@@ -31,12 +31,12 @@ const querySchema = z.object({
     })
     .optional(),
   status: z.enum(['ACTIVE', 'CANCELLED']).optional(),
-  createdAfter: z
-    .iso.datetime({ offset: true })
+  createdAfter: z.iso
+    .datetime({ offset: true })
     .transform((value) => new Date(value))
     .optional(),
-  createdBefore: z
-    .iso.datetime({ offset: true })
+  createdBefore: z.iso
+    .datetime({ offset: true })
     .transform((value) => new Date(value))
     .optional(),
   limit: z.coerce.number().int().min(1).max(100).default(100),
@@ -143,17 +143,8 @@ export async function streamRoutes(app: FastifyInstance): Promise<void> {
       // their own); `ngo` filters by the NGO's internal id, matching what
       // GET /ngos and /ngos/:id expose; `ngoAddress` filters by the NGO's
       // Stellar wallet address for clients that only have the on-chain key.
-      const {
-        donor,
-        ngo,
-        ngoAddress,
-        token,
-        status,
-        createdAfter,
-        createdBefore,
-        limit,
-        cursor,
-      } = parsedQuery.data;
+      const { donor, ngo, ngoAddress, token, status, createdAfter, createdBefore, limit, cursor } =
+        parsedQuery.data;
 
       const rows = await prisma.stream.findMany({
         where: {

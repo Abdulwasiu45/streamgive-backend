@@ -86,18 +86,16 @@ describe('GET /v1/streams', () => {
           withdrawn: '0',
           createdAt: new Date('2025-01-01T23:59:59.999Z'),
         },
-        ...[start, new Date('2025-01-02T12:00:00.000Z'), end].map(
-          (createdAt, index) => ({
-            onChainId: BigInt(index + 2),
-            donorId: donor.id,
-            ngoId: ngo.id,
-            tokenAddress: fakeAddress('D'),
-            rate: '1',
-            balance: '100',
-            withdrawn: '0',
-            createdAt,
-          }),
-        ),
+        ...[start, new Date('2025-01-02T12:00:00.000Z'), end].map((createdAt, index) => ({
+          onChainId: BigInt(index + 2),
+          donorId: donor.id,
+          ngoId: ngo.id,
+          tokenAddress: fakeAddress('D'),
+          rate: '1',
+          balance: '100',
+          withdrawn: '0',
+          createdAt,
+        })),
         {
           onChainId: 5n,
           donorId: donor.id,
