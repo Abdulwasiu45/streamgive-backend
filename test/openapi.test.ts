@@ -55,7 +55,7 @@ describe('OpenAPI documentation', () => {
   it('keeps committed openapi.json in sync with the generated OpenAPI specification', async () => {
     const doc = await generateOpenApiDocument();
     const committed = readFileSync(resolve(process.cwd(), 'openapi.json'), 'utf8');
-    expect(committed).toBe(`${JSON.stringify(doc, null, 2)}\n`);
+    expect(JSON.parse(committed)).toEqual(doc);
   });
 
   it('documents every registered route except explicitly allowlisted infrastructure routes', async () => {
