@@ -8,10 +8,8 @@ import { logger } from '../logger.js';
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 function retentionDays(): number {
-  return envInt(process.env.LOG_RETENTION_DAYS, 'LOG_RETENTION_DAYS', {
-    defaultValue: DEFAULT_LOG_RETENTION_DAYS,
-    min: 1,
-  });
+  const configured = Number(process.env.LOG_RETENTION_DAYS);
+  return Number.isSafeInteger(configured) && configured > 0 ? configured : DEFAULT_RETENTION_DAYS;
 }
 
 export async function pruneOldLogs(

@@ -2,3 +2,6 @@ dist
 node_modules
 coverage
 openapi.json
+.github/dependabot.yml
+.github/workflows/codeql.yml
+.github/workflows/npm-audit.yml

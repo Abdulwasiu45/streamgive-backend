@@ -184,7 +184,13 @@ describe('requireAdminSignature', () => {
     const tamperedBody = JSON.stringify({ reviewNote: 'rejected' });
 
     // Sign over the original body, but send a different body
-    const headers = signAdminRequest(legacyAdmin, 'POST', '/v1/ngo-applications/00000000-0000-0000-0000-000000000000/approve', ts, originalBody);
+    const headers = signAdminRequest(
+      legacyAdmin,
+      'POST',
+      '/v1/ngo-applications/00000000-0000-0000-0000-000000000000/approve',
+      ts,
+      originalBody,
+    );
 
     const response = await app.inject({
       method: 'POST',

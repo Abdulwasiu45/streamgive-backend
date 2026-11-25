@@ -1,5 +1,6 @@
 import { writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 import { buildServer } from '../server.js';
 
@@ -20,7 +21,7 @@ async function main(): Promise<void> {
   console.log(`Exported OpenAPI document to ${outputPath}`);
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
   main().catch((err) => {
     console.error(err);
     process.exit(1);

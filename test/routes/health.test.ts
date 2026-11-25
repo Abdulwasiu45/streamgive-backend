@@ -255,7 +255,7 @@ describe('GET /health/ready', () => {
     await app.close();
   });
 
-  it('rejects a non-numeric INDEXER_LAG_THRESHOLD during config parsing', () => {
+  it('rejects a non-numeric INDEXER_LAG_THRESHOLD during configuration validation', () => {
     const original = process.env.INDEXER_LAG_THRESHOLD;
     process.env.INDEXER_LAG_THRESHOLD = 'abc';
 

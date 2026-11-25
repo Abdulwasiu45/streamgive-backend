@@ -56,7 +56,12 @@ export async function handleNgoRegistryEvent(event: ContractEvent): Promise<void
 
     const ngo = await prisma.ngo.findFirst({ where: { ownerAddress }, select: { id: true } });
     if (ngo) {
-      dispatchNotification({ type: 'ngo_registered', ownerAddress, ngoId: ngo.id, eventId: event.id });
+      dispatchNotification({
+        type: 'ngo_registered',
+        ownerAddress,
+        ngoId: ngo.id,
+        eventId: event.id,
+      });
     }
     return;
   }
@@ -81,7 +86,12 @@ export async function handleNgoRegistryEvent(event: ContractEvent): Promise<void
 
     const ngo = await prisma.ngo.findFirst({ where: { ownerAddress }, select: { id: true } });
     if (ngo) {
-      dispatchNotification({ type: 'ngo_approved', ownerAddress, ngoId: ngo.id, eventId: event.id });
+      dispatchNotification({
+        type: 'ngo_approved',
+        ownerAddress,
+        ngoId: ngo.id,
+        eventId: event.id,
+      });
     }
     return;
   }

@@ -87,10 +87,7 @@ export async function sendContactVerification(application: {
       }),
     });
     if (!response.ok) {
-      logger.error(
-        { status: response.status },
-        'contact verification email was rejected',
-      );
+      logger.error({ status: response.status }, 'contact verification email was rejected');
       return false;
     }
     return true;

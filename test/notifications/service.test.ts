@@ -181,7 +181,7 @@ describe('notify', () => {
     );
   });
 
-  it('fans an event out only to enabled endpoints subscribed to its type', async () => {
+  it('fans an event out only to enabled endpoints with a matching event type', async () => {
     await prisma.notificationEndpoint.createMany({
       data: [
         {
@@ -193,6 +193,11 @@ describe('notify', () => {
           url: 'https://8.8.4.4/two',
           secret: 'two-secret',
           eventTypes: ['ngo_approved'],
+        },
+        {
+          url: 'https://1.0.0.1/empty',
+          secret: 'empty-secret',
+          eventTypes: [],
         },
         {
           url: 'https://1.1.1.1/disabled',
@@ -209,7 +214,10 @@ describe('notify', () => {
     expect(fetchSpy).toHaveBeenCalledTimes(1);
     expect(fetchSpy).toHaveBeenCalledWith(
       'https://8.8.8.8/one',
-      expect.objectContaining({ method: 'POST', body: JSON.stringify({ ...event, eventId: 'fanout-event-1' }) }),
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ ...event, eventId: 'fanout-event-1' }),
+      }),
     );
     const log = await prisma.notificationLog.findFirst({
       where: { eventId: 'fanout-event-1', channel: { startsWith: 'webhook:' }, success: true },

@@ -10,17 +10,17 @@ representative; timestamps are ISO 8601 strings.
 
 All cursor endpoints accept an integer `limit` between 1 and 100, defaulting to 100. Omit `cursor` for the first page. Pass the previous response's `nextCursor` unchanged and keep the same filters and ordering. The cursor is the UUID of the last returned row and is exclusive. Stop on `nextCursor: null`, even when a page contains exactly `limit` rows.
 
-| GET endpoint | Default / max | Cursor or offset | End of results |
-| --- | --- | --- | --- |
-| /v1/streams | 100 / 100 | Stream UUID, newest first | `hasMore: false, nextCursor: null` |
-| /v1/streams/:id/activity | 100 / 100 | Event UUID, newest first | `hasMore: false, nextCursor: null`. Unknown UUID returns 400. |
-| /v1/donors | 100 / 100 | Donor UUID in the requested ranking | `nextCursor: null`. A cursor outside the ranking returns 400. |
-| /v1/ngos | 100 / 100 | NGO UUID in the selected sort and search | `nextCursor: null` |
-| /v1/ngos/all | 100 / 100 | NGO UUID, newest first | `nextCursor: null` |
-| /v1/ngos/:id/donors | 100 / 100 | Donor UUID, ascending by ID | `nextCursor: null` |
-| /v1/admin/dead-letters | 100 / 100 | Dead-letter UUID, newest first | `hasMore: false, nextCursor: null`. Unknown UUID produces an empty page. |
-| /v1/admin/notification-logs | 100 / 100 | Log UUID, newest first | `hasMore: false, nextCursor: null`. Unknown UUID produces an empty page. |
-| /v1/ngo-applications | 100 / 100 | `offset` defaults to 0 and accepts up to 10,000. Advance it by the number of items returned. | Stop on an empty page or when the next offset reaches `total`. |
+| GET endpoint                | Default / max | Cursor or offset                                                                             | End of results                                                           |
+| --------------------------- | ------------- | -------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| /v1/streams                 | 100 / 100     | Stream UUID, newest first                                                                    | `hasMore: false, nextCursor: null`                                       |
+| /v1/streams/:id/activity    | 100 / 100     | Event UUID, newest first                                                                     | `hasMore: false, nextCursor: null`. Unknown UUID returns 400.            |
+| /v1/donors                  | 100 / 100     | Donor UUID in the requested ranking                                                          | `nextCursor: null`. A cursor outside the ranking returns 400.            |
+| /v1/ngos                    | 100 / 100     | NGO UUID in the selected sort and search                                                     | `nextCursor: null`                                                       |
+| /v1/ngos/all                | 100 / 100     | NGO UUID, newest first                                                                       | `nextCursor: null`                                                       |
+| /v1/ngos/:id/donors         | 100 / 100     | Donor UUID, ascending by ID                                                                  | `nextCursor: null`                                                       |
+| /v1/admin/dead-letters      | 100 / 100     | Dead-letter UUID, newest first                                                               | `hasMore: false, nextCursor: null`. Unknown UUID produces an empty page. |
+| /v1/admin/notification-logs | 100 / 100     | Log UUID, newest first                                                                       | `hasMore: false, nextCursor: null`. Unknown UUID produces an empty page. |
+| /v1/ngo-applications        | 100 / 100     | `offset` defaults to 0 and accepts up to 10,000. Advance it by the number of items returned. | Stop on an empty page or when the next offset reaches `total`.           |
 
 `GET /v1/ngos/:id` embeds up to 10 recent streams and returns `recentStreamsNextCursor` when more are available. Use this cursor with `GET /v1/streams` filtered to the same NGO. The donor CSV export streams the full result using internal batching. Other unpaged lists do not accept a continuation token.
 
@@ -64,42 +64,42 @@ responses may also include a `details` object; clients should branch on the
 `error` value rather than parse human-readable messages. The table lists the
 codes returned by the API and an example response body for each.
 
-| HTTP status | Error code | Meaning | Example response body |
-| --- | --- | --- | --- |
-| 400 | `invalid_request` | A route parameter, query, or request body failed validation. Some validation errors include `details`. | `{"error":"invalid_request"}` |
-| 400 | `invalid_or_expired_challenge` | An NGO application challenge is missing, expired, or already consumed. | `{"error":"invalid_or_expired_challenge"}` |
-| 401 | `unauthorized` | Admin signature or configured metrics authentication is missing or invalid. | `{"error":"unauthorized"}` |
-| 401 | `invalid_signature` | The signature for an NGO application challenge did not verify. | `{"error":"invalid_signature"}` |
-| 401 | `stale_signature` | The admin timestamp is malformed or outside the permitted clock-skew window. | `{"error":"stale_signature"}` |
-| 401 | `timestamp_unit_mismatch` | The admin timestamp appears to be in seconds; send Unix milliseconds. | `{"error":"timestamp_unit_mismatch"}` |
-| 401 | `replayed_signature` | The same admin address and timestamp have already been used. | `{"error":"replayed_signature"}` |
-| 404 | `not_found` | The requested route or resource does not exist. | `{"error":"not_found"}` |
-| 409 | `already_reviewed` | The NGO application is no longer pending review. | `{"error":"already_reviewed"}` |
-| 409 | `application_already_pending` | An application for this owner is already pending. | `{"error":"application_already_pending"}` |
-| 409 | `already_approved` | This owner already has an approved application. | `{"error":"already_approved"}` |
-| 503 | `admin_auth_not_configured` | Admin-protected routes are unavailable until an admin address is configured. | `{"error":"admin_auth_not_configured"}` |
-| 500 | `internal_server_error` | An unexpected server error occurred; internal details are not returned. | `{"error":"internal_server_error"}` |
+| HTTP status | Error code                     | Meaning                                                                                                | Example response body                      |
+| ----------- | ------------------------------ | ------------------------------------------------------------------------------------------------------ | ------------------------------------------ |
+| 400         | `invalid_request`              | A route parameter, query, or request body failed validation. Some validation errors include `details`. | `{"error":"invalid_request"}`              |
+| 400         | `invalid_or_expired_challenge` | An NGO application challenge is missing, expired, or already consumed.                                 | `{"error":"invalid_or_expired_challenge"}` |
+| 401         | `unauthorized`                 | Admin signature or configured metrics authentication is missing or invalid.                            | `{"error":"unauthorized"}`                 |
+| 401         | `invalid_signature`            | The signature for an NGO application challenge did not verify.                                         | `{"error":"invalid_signature"}`            |
+| 401         | `stale_signature`              | The admin timestamp is malformed or outside the permitted clock-skew window.                           | `{"error":"stale_signature"}`              |
+| 401         | `timestamp_unit_mismatch`      | The admin timestamp appears to be in seconds; send Unix milliseconds.                                  | `{"error":"timestamp_unit_mismatch"}`      |
+| 401         | `replayed_signature`           | The same admin address and timestamp have already been used.                                           | `{"error":"replayed_signature"}`           |
+| 404         | `not_found`                    | The requested route or resource does not exist.                                                        | `{"error":"not_found"}`                    |
+| 409         | `already_reviewed`             | The NGO application is no longer pending review.                                                       | `{"error":"already_reviewed"}`             |
+| 409         | `application_already_pending`  | An application for this owner is already pending.                                                      | `{"error":"application_already_pending"}`  |
+| 409         | `already_approved`             | This owner already has an approved application.                                                        | `{"error":"already_approved"}`             |
+| 503         | `admin_auth_not_configured`    | Admin-protected routes are unavailable until an admin address is configured.                           | `{"error":"admin_auth_not_configured"}`    |
+| 500         | `internal_server_error`        | An unexpected server error occurred; internal details are not returned.                                | `{"error":"internal_server_error"}`        |
 
 ## Caching and conditional requests
 
 Eleven public read endpoints send a validator and a short shared-cache
 lifetime. Everything else is uncached.
 
-| Method and path | Cacheable |
-|---|---|
-| `GET /v1/ngos` | Yes |
-| `GET /v1/ngos/lookup` | Yes |
-| `GET /v1/ngos/{id}` | Yes |
-| `GET /v1/ngos/{id}/donors` | Yes |
-| `GET /v1/donors` | Yes |
-| `GET /v1/donors/{address}` | Yes |
-| `GET /v1/streams` | Yes |
-| `GET /v1/streams/{id}` | Yes |
-| `GET /v1/streams/on-chain/{onChainId}` | Yes |
-| `GET /v1/streams/{id}/activity` | Yes |
-| `GET /v1/impact` | Yes |
-| `GET /v1/impact/{ngoId}` | Yes |
-| `GET /v1/impact/{ngoId}/timeseries` | Yes |
+| Method and path                        | Cacheable |
+| -------------------------------------- | --------- |
+| `GET /v1/ngos`                         | Yes       |
+| `GET /v1/ngos/lookup`                  | Yes       |
+| `GET /v1/ngos/{id}`                    | Yes       |
+| `GET /v1/ngos/{id}/donors`             | Yes       |
+| `GET /v1/donors`                       | Yes       |
+| `GET /v1/donors/{address}`             | Yes       |
+| `GET /v1/streams`                      | Yes       |
+| `GET /v1/streams/{id}`                 | Yes       |
+| `GET /v1/streams/on-chain/{onChainId}` | Yes       |
+| `GET /v1/streams/{id}/activity`        | Yes       |
+| `GET /v1/impact`                       | Yes       |
+| `GET /v1/impact/{ngoId}`               | Yes       |
+| `GET /v1/impact/{ngoId}/timeseries`    | Yes       |
 
 Not cacheable: `GET /v1/ngos/all`, `GET /v1/ngo-applications*`, the admin
 routes, `GET /v1/donors/{address}/streams.csv`, `GET /v1/indexer/status`,
@@ -491,15 +491,17 @@ Returns `400 {"error":"invalid_request"}` for an invalid address and
 **Auth:** Public  
 **Query params:**
 
-| Name         | Type                     | Default | Description                    |
-| ------------ | ------------------------ | ------- | ------------------------------ |
-| `donor`      | Stellar public key       | —       | Filter by donor address.       |
-| `ngo`        | UUID                     | —       | Filter by NGO ID.              |
-| `ngoAddress` | Stellar public key       | —       | Filter by NGO owner address.   |
-| `token`      | Stellar contract address | —       | Filter by token contract.      |
-| `status`     | `ACTIVE` or `CANCELLED`  | —       | Filter by stream status.       |
-| `limit`      | integer, 1–100           | `100`   | Maximum results.               |
-| `cursor`     | UUID                     | —       | Continue after this stream ID. |
+| Name            | Type                     | Default | Description                                    |
+| --------------- | ------------------------ | ------- | ---------------------------------------------- |
+| `donor`         | Stellar public key       | —       | Filter by donor address.                       |
+| `ngo`           | UUID                     | —       | Filter by NGO ID.                               |
+| `ngoAddress`    | Stellar public key       | —       | Filter by NGO owner address.                   |
+| `token`         | Stellar contract address | —       | Filter by token contract.                      |
+| `status`        | `ACTIVE` or `CANCELLED`  | —       | Filter by stream status.                       |
+| `createdAfter`  | ISO-8601 date-time       | —       | Include streams created at or after this time. |
+| `createdBefore` | ISO-8601 date-time       | —       | Include streams created at or before this time.|
+| `limit`         | integer, 1–100           | `100`   | Maximum results.                               |
+| `cursor`        | UUID                     | —       | Continue after this stream ID.                |
 
 Returns streams newest first. On-chain integer values are serialized as
 decimal strings.
@@ -608,9 +610,7 @@ the other public collection endpoints.
 
 ```json
 {
-  "tokens": [
-    { "tokenAddress": "<STELLAR_CONTRACT_ADDRESS>", "streamCount": 12 }
-  ]
+  "tokens": [{ "tokenAddress": "<STELLAR_CONTRACT_ADDRESS>", "streamCount": 12 }]
 }
 ```
 

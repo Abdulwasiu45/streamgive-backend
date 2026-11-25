@@ -27,13 +27,7 @@ describe('admin notification endpoint routes', () => {
   function signedHeaders(method: string, url: string, body = '') {
     return {
       'content-type': 'application/json',
-      ...signAdminRequest(
-        adminKeypair,
-        method,
-        url,
-        String(Date.now() + timestampOffset++),
-        body,
-      ),
+      ...signAdminRequest(adminKeypair, method, url, String(Date.now() + timestampOffset++), body),
     };
   }
 
@@ -185,7 +179,9 @@ describe('admin notification endpoint routes', () => {
       const sentBody = init?.body as string;
       expect(JSON.parse(sentBody)).toMatchObject({ type: 'ping', endpointId: id });
       const expected = createHmac('sha256', 'ping-secret')
-        .update(`${headers['x-streamgive-timestamp']}.${headers['x-streamgive-delivery-id']}.${sentBody}`)
+        .update(
+          `${headers['x-streamgive-timestamp']}.${headers['x-streamgive-delivery-id']}.${sentBody}`,
+        )
         .digest('hex');
       expect(headers['x-streamgive-signature']).toBe(`v1=${expected}`);
 
