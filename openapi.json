@@ -451,7 +451,7 @@
           {
             "schema": {
               "type": "string",
-              "enum": ["ACTIVE", "CANCELLED"]
+              "enum": ["ACTIVE", "PAUSED", "CANCELLED"]
             },
             "in": "query",
             "name": "status",
