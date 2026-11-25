@@ -491,17 +491,17 @@ Returns `400 {"error":"invalid_request"}` for an invalid address and
 **Auth:** Public  
 **Query params:**
 
-| Name            | Type                     | Default | Description                                    |
-| --------------- | ------------------------ | ------- | ---------------------------------------------- |
-| `donor`         | Stellar public key       | —       | Filter by donor address.                       |
+| Name            | Type                     | Default | Description                                     |
+| --------------- | ------------------------ | ------- | ----------------------------------------------- |
+| `donor`         | Stellar public key       | —       | Filter by donor address.                        |
 | `ngo`           | UUID                     | —       | Filter by NGO ID.                               |
-| `ngoAddress`    | Stellar public key       | —       | Filter by NGO owner address.                   |
-| `token`         | Stellar contract address | —       | Filter by token contract.                      |
-| `status`        | `ACTIVE` or `CANCELLED`  | —       | Filter by stream status.                       |
-| `createdAfter`  | ISO-8601 date-time       | —       | Include streams created at or after this time. |
-| `createdBefore` | ISO-8601 date-time       | —       | Include streams created at or before this time.|
-| `limit`         | integer, 1–100           | `100`   | Maximum results.                               |
-| `cursor`        | UUID                     | —       | Continue after this stream ID.                |
+| `ngoAddress`    | Stellar public key       | —       | Filter by NGO owner address.                    |
+| `token`         | Stellar contract address | —       | Filter by token contract.                       |
+| `status`        | `ACTIVE` or `CANCELLED`  | —       | Filter by stream status.                        |
+| `createdAfter`  | ISO-8601 date-time       | —       | Include streams created at or after this time.  |
+| `createdBefore` | ISO-8601 date-time       | —       | Include streams created at or before this time. |
+| `limit`         | integer, 1–100           | `100`   | Maximum results.                                |
+| `cursor`        | UUID                     | —       | Continue after this stream ID.                  |
 
 Returns streams newest first. On-chain integer values are serialized as
 decimal strings.
