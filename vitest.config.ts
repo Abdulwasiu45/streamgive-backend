@@ -4,6 +4,7 @@ const unitTests = [
   'test/cacheable.test.ts',
   'test/compression.test.ts',
   'test/config.test.ts',
+  'test/startupConfig.test.ts',
   'test/cors.test.ts',
   'test/slowRequestLog.test.ts',
   'test/metrics.test.ts',
