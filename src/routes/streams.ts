@@ -80,6 +80,25 @@ const streamInclude = {
   ngo: { select: { id: true, name: true, displayName: true, ownerAddress: true } },
 } as const;
 
+/** Stream response docs: the schema is open, with the optional memo and delayed start called out. */
+const streamResponseDocs = {
+  type: 'object',
+  additionalProperties: true,
+  properties: {
+    memo: {
+      type: 'string',
+      nullable: true,
+      description: 'Short memo the donor attached to the stream; null when none was given.',
+    },
+    startsAt: {
+      type: 'string',
+      format: 'date-time',
+      nullable: true,
+      description: 'When the stream starts, for a delayed start; null when it started at creation.',
+    },
+  },
+} as const;
+
 // onChainId is a BigInt; Fastify's default JSON.stringify serializer (no
 // response schema is defined yet) throws on BigInt, so it has to go out as
 // a string.
@@ -207,7 +226,7 @@ export async function streamRoutes(app: FastifyInstance): Promise<void> {
           required: ['id'],
         },
         response: {
-          200: { type: 'object', additionalProperties: true },
+          200: streamResponseDocs,
           400: { type: 'object', additionalProperties: true },
           404: { type: 'object', additionalProperties: true },
         },
@@ -254,7 +273,7 @@ export async function streamRoutes(app: FastifyInstance): Promise<void> {
           required: ['onChainId'],
         },
         response: {
-          200: { type: 'object', additionalProperties: true },
+          200: streamResponseDocs,
           404: { type: 'object', additionalProperties: true },
         },
       },

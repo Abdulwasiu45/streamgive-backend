@@ -556,7 +556,20 @@
               "application/json": {
                 "schema": {
                   "type": "object",
-                  "additionalProperties": true
+                  "additionalProperties": true,
+                  "properties": {
+                    "memo": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "Short memo the donor attached to the stream; null when none was given."
+                    },
+                    "startsAt": {
+                      "type": "string",
+                      "format": "date-time",
+                      "nullable": true,
+                      "description": "When the stream starts, for a delayed start; null when it started at creation."
+                    }
+                  }
                 }
               }
             }
@@ -608,7 +621,20 @@
               "application/json": {
                 "schema": {
                   "type": "object",
-                  "additionalProperties": true
+                  "additionalProperties": true,
+                  "properties": {
+                    "memo": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "Short memo the donor attached to the stream; null when none was given."
+                    },
+                    "startsAt": {
+                      "type": "string",
+                      "format": "date-time",
+                      "nullable": true,
+                      "description": "When the stream starts, for a delayed start; null when it started at creation."
+                    }
+                  }
                 }
               }
             }

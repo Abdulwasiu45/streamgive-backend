@@ -75,6 +75,10 @@ model Stream {
   /// Transaction hash of the on-chain transaction that created this stream.
   /// Null for streams indexed before this field was added.
   createdTxHash String?      @map("created_tx_hash")
+  /// Short memo the donor attached to the stream; null when none was given.
+  memo          String?
+  /// When the stream starts, for a delayed start; null when it started at creation.
+  startsAt      DateTime?    @map("starts_at")
   createdAt     DateTime     @default(now()) @map("created_at")
   updatedAt     DateTime     @updatedAt @map("updated_at")
 
