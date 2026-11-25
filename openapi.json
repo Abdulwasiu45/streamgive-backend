@@ -1923,6 +1923,54 @@
           }
         }
       }
+    },
+    "/v1/admin/overview": {
+      "get": {
+        "summary": "Admin overview of queue sizes and failures",
+        "tags": ["Admin"],
+        "security": [
+          {
+            "AdminAddress": [],
+            "AdminSignature": [],
+            "AdminTimestamp": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "tags": [
