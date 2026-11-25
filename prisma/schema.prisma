@@ -35,6 +35,8 @@ model Ngo {
   verified     Boolean  @default(false)
   /// When the registry last approved this NGO; null while unverified.
   verifiedAt       DateTime? @map("verified_at")
+  /// When the registry's verification expires; null when it has no expiry. Past this instant the NGO counts as unverified.
+  verifiedUntil    DateTime? @map("verified_until")
   /// Owner-updated public description; falls back to approved application when null.
   description      String?
   /// Owner-updated public website; falls back to approved application when null.
