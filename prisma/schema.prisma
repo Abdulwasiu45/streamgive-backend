@@ -54,6 +54,7 @@ model Ngo {
 
 enum StreamStatus {
   ACTIVE
+  PAUSED
   CANCELLED
 }
 
@@ -77,6 +78,8 @@ model Stream {
   /// Transaction hash of the on-chain transaction that created this stream.
   /// Null for streams indexed before this field was added.
   createdTxHash String?      @map("created_tx_hash")
+  /// When the donor paused the stream; null unless the status is PAUSED.
+  pausedAt      DateTime?    @map("paused_at")
   createdAt     DateTime     @default(now()) @map("created_at")
   updatedAt     DateTime     @updatedAt @map("updated_at")
 

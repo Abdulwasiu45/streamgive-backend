@@ -497,7 +497,7 @@ Returns `400 {"error":"invalid_request"}` for an invalid address and
 | `ngo`           | UUID                     | —       | Filter by NGO ID.                               |
 | `ngoAddress`    | Stellar public key       | —       | Filter by NGO owner address.                   |
 | `token`         | Stellar contract address | —       | Filter by token contract.                      |
-| `status`        | `ACTIVE` or `CANCELLED`  | —       | Filter by stream status.                       |
+| `status`        | `ACTIVE`, `PAUSED` or `CANCELLED` | —       | Filter by stream status.                       |
 | `createdAfter`  | ISO-8601 date-time       | —       | Include streams created at or after this time. |
 | `createdBefore` | ISO-8601 date-time       | —       | Include streams created at or before this time.|
 | `limit`         | integer, 1–100           | `100`   | Maximum results.                               |

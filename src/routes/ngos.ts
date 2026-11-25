@@ -76,7 +76,7 @@ const donorListQuerySchema = z.object({
 });
 
 function committedAmount(stream: {
-  status: 'ACTIVE' | 'CANCELLED';
+  status: 'ACTIVE' | 'PAUSED' | 'CANCELLED';
   balance: string;
   withdrawn: string;
 }): bigint {
