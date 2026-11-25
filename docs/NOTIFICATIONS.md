@@ -5,13 +5,13 @@ notification it emits (see [Webhook destinations](#webhook-destinations)).
 Every body is discriminated by its `type` field. The matching TypeScript definitions live in
 [`src/notifications/types.ts`](../src/notifications/types.ts).
 
-All events may include an optional `eventId` — the on-chain event id used to
-deduplicate deliveries and to retry failed sends. Each webhook request also
-includes an `x-streamgive-delivery-id` and an epoch-seconds
-`x-streamgive-timestamp`. When a destination secret is configured, the
-`x-streamgive-signature` header contains a versioned HMAC over the timestamp,
-delivery id, and exact request body. See [signature verification](#signature-verification)
-below.
+On-chain events include an `eventId` — the on-chain event id used to
+deduplicate deliveries and to retry failed sends. API-originated application
+events do not include an `eventId`. Each webhook request also includes an
+`x-streamgive-delivery-id` and an epoch-seconds `x-streamgive-timestamp`.
+When a destination secret is configured, the `x-streamgive-signature` header
+contains a versioned HMAC over the timestamp, delivery id, and exact request
+body. See [signature verification](#signature-verification) below.
 
 For receiver-side guidance — signature verification, answering within the
 timeout, retries, ordering and idempotency — see
@@ -115,8 +115,7 @@ Emitted when an NGO application is submitted through the API.
   "type": "application_submitted",
   "applicationId": "clx1y2z3...",
   "ownerAddress": "GABC...",
-  "name": "Red Cross",
-  "eventId": "0000000100-0000000000"
+  "name": "Red Cross"
 }
 ```
 
@@ -130,13 +129,28 @@ Emitted when an admin approves or rejects an NGO application.
   "applicationId": "clx1y2z3...",
   "ownerAddress": "GABC...",
   "status": "APPROVED",
-  "reviewNote": "Verified against public records.",
-  "eventId": "0000000100-0000000000"
+  "reviewNote": "Verified against public records."
 }
 ```
 
 - `status` — either `APPROVED` or `REJECTED`.
 - `reviewNote` — optional admin review note.
+
+## Delivery headers and timeout
+
+Each webhook delivery is an HTTP `POST` with these headers:
+
+| Header                     | Value                                                                           |
+| -------------------------- | ------------------------------------------------------------------------------- |
+| `content-type`             | `application/json`                                                              |
+| `x-streamgive-delivery-id` | Stable UUID for the persisted delivery; unchanged on retries.                   |
+| `x-streamgive-timestamp`   | Unix epoch time in seconds, refreshed for each attempt.                         |
+| `x-streamgive-signature`   | `v1=<lower-case-hex>` HMAC-SHA256, sent only when the destination has a secret. |
+
+The sender waits up to 3 seconds by default. Set `NOTIFY_WEBHOOK_TIMEOUT_MS`
+to a positive integer number of milliseconds to change the limit. A timeout is
+a failed attempt and is retried with exponential backoff, up to five attempts.
+Respond with a 2xx status to acknowledge a delivery.
 
 ## Webhook destinations
 
@@ -188,3 +202,36 @@ configuring a secret.
 
 For complete Node.js and Python receiver examples, including timestamp and
 replay checks, see [WEBHOOKS.md](./WEBHOOKS.md).
+
+Here is a minimal Node.js verification example. Pass the exact raw request
+body bytes (before JSON parsing), the three `x-streamgive-*` headers, and the
+secret configured for the destination:
+
+```js
+import { createHmac, timingSafeEqual } from 'node:crypto';
+
+function verifyNotification(rawBody, headers, secret) {
+  const timestamp = headers['x-streamgive-timestamp'];
+  const deliveryId = headers['x-streamgive-delivery-id'];
+  const match = /^v1=([0-9a-f]{64})$/.exec(headers['x-streamgive-signature'] ?? '');
+  const seconds = Number(timestamp);
+
+  if (
+    !match ||
+    !timestamp ||
+    !deliveryId ||
+    !Number.isSafeInteger(seconds) ||
+    Math.abs(Date.now() / 1000 - seconds) > 300
+  ) {
+    return false;
+  }
+
+  const expected = createHmac('sha256', secret)
+    .update(`${timestamp}.${deliveryId}.`)
+    .update(rawBody)
+    .digest();
+  const received = Buffer.from(match[1], 'hex');
+
+  return received.length === expected.length && timingSafeEqual(received, expected);
+}
+```

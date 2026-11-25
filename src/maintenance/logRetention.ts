@@ -1,10 +1,11 @@
 import type { FastifyInstance } from 'fastify';
 
 import { prisma } from '../db.js';
+import { DEFAULT_LOG_RETENTION_DAYS } from '../config.js';
+import { envInt } from '../config/env.js';
 import { logger } from '../logger.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
-const DEFAULT_RETENTION_DAYS = 90;
 
 function retentionDays(): number {
   const configured = Number(process.env.LOG_RETENTION_DAYS);
