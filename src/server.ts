@@ -1,6 +1,7 @@
 import Fastify from 'fastify';
 
 import { parseConfig } from './config.js';
+import { adminOverviewRoutes } from './routes/adminOverview.js';
 import { donorRoutes } from './routes/donors.js';
 import { impactRoutes } from './routes/impact.js';
 import { indexerStatusRoutes } from './routes/indexerStatus.js';
@@ -127,6 +128,7 @@ export function buildServer(options?: BuildServerOptions) {
   app.register(deadLetterRoutes, apiPrefix);
   app.register(notificationEndpointRoutes, apiPrefix);
   app.register(notificationLogRoutes, apiPrefix);
+  app.register(adminOverviewRoutes, apiPrefix);
   registerLogRetention(app);
 
   return app;
