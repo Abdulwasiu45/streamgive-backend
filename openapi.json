@@ -316,6 +316,25 @@
         }
       }
     },
+    "/v1/ngos/{id}/streams": {
+      "get": {
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "id",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
     "/v1/ngos/{id}/profile": {
       "patch": {
         "parameters": [
