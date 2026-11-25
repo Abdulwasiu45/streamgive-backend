@@ -99,4 +99,17 @@ describe('sendContactVerification', () => {
     expect(where).toMatchObject({ id: 'app-1', emailVerifiedAt: null });
     expect(where.OR).toHaveLength(2);
   });
+
+  it('escapes tags, quotes and ampersands in the NGO name', async () => {
+    const name = `<script>alert("x")</script> & O'Brien "><img src=x onerror=alert(1)>`;
+
+    await expect(sendContactVerification({ ...application, name })).resolves.toBe(true);
+
+    const { html } = sentBody();
+    expect(html).toContain(
+      'Hello &lt;script&gt;alert(&quot;x&quot;)&lt;/script&gt; &amp; O&#39;Brien &quot;&gt;&lt;img src=x onerror=alert(1)&gt;,</p>',
+    );
+    expect(html).not.toContain('<script');
+    expect(html).not.toContain('<img');
+  });
 });
