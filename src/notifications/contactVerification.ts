@@ -2,6 +2,7 @@ import { createHash, randomBytes } from 'node:crypto';
 
 import { prisma } from '../db.js';
 import { logger } from '../logger.js';
+import { contactVerificationEmail } from './emailTemplates.js';
 
 const CONTACT_EMAIL_TOKEN_TTL_MS = 24 * 60 * 60 * 1000;
 const CONTACT_EMAIL_RESEND_COOLDOWN_MS = 5 * 60 * 1000;
@@ -14,6 +15,7 @@ export async function sendContactVerification(application: {
   id: string;
   name: string;
   contactEmail: string;
+  locale?: string | null;
 }): Promise<boolean> {
   const apiKey = process.env.RESEND_API_KEY;
   const from = process.env.NOTIFY_EMAIL_FROM;
@@ -72,6 +74,11 @@ export async function sendContactVerification(application: {
 
   const verificationUrl = new URL('/v1/ngo-applications/verify-contact-email', baseUrl);
   verificationUrl.searchParams.set('token', token);
+  const email = contactVerificationEmail(
+    application.locale,
+    application.name,
+    verificationUrl.toString(),
+  );
   try {
     const response = await fetch('https://api.resend.com/emails', {
       method: 'POST',
@@ -82,8 +89,8 @@ export async function sendContactVerification(application: {
       body: JSON.stringify({
         from,
         to: [application.contactEmail],
-        subject: 'Verify your StreamGive NGO contact email',
-        html: `<p>Hello ${escapeHtml(application.name)},</p><p><a href="${verificationUrl.toString()}">Verify this contact email</a>. This link expires in 24 hours.</p>`,
+        subject: email.subject,
+        html: email.html,
       }),
     });
     if (!response.ok) {
@@ -118,18 +125,5 @@ export async function verifyContactToken(token: string): Promise<boolean> {
       data: { emailVerifiedAt: new Date() },
     });
     return true;
-  });
-}
-
-function escapeHtml(value: string): string {
-  return value.replace(/[&<>"']/g, (character) => {
-    const entities: Record<string, string> = {
-      '&': '&amp;',
-      '<': '&lt;',
-      '>': '&gt;',
-      '"': '&quot;',
-      "'": '&#39;',
-    };
-    return entities[character];
   });
 }

@@ -108,6 +108,8 @@ model NgoApplication {
   website                       String?
   contactEmail                  String               @map("contact_email")
   country                       String?
+  /// Applicant's preferred language (BCP 47 tag), used to pick an email template; null means English.
+  locale                        String?
   status                        NgoApplicationStatus @default(PENDING)
   reviewNote                    String?              @map("review_note")
   reviewedBy                    String?              @map("reviewed_by")
