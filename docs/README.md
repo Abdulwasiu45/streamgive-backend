@@ -21,6 +21,7 @@ Guides and reference documents for the StreamGive backend are listed below.
 ## API and data
 
 - [API reference](API.md) — Endpoints, parameters, authentication, and response examples.
+- [API examples](API-EXAMPLES.md) — Copy-ready `curl` commands and sample responses for every public endpoint.
 - [API versioning](API-VERSIONING.md) — API compatibility and versioning policy.
 - [Data model](DATA-MODEL.md) — Database entities, relationships, and derived API statistics.
 - [Admin request signing example](../src/scripts/signAdminRequest.ts) — TypeScript helper that prints a signed admin request as a `curl` command.

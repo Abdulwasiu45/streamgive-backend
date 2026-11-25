@@ -6,6 +6,9 @@ backend. Except for health checks and metrics, API routes are mounted under
 addresses, timestamps, and signatures. JSON response fields shown are
 representative; timestamps are ISO 8601 strings.
 
+For copy-ready `curl` commands and sample responses for every public
+endpoint, see [API examples](API-EXAMPLES.md).
+
 ## Pagination
 
 All cursor endpoints accept an integer `limit` between 1 and 100, defaulting to 100. Omit `cursor` for the first page. Pass the previous response's `nextCursor` unchanged and keep the same filters and ordering. The cursor is the UUID of the last returned row and is exclusive. Stop on `nextCursor: null`, even when a page contains exactly `limit` rows.
