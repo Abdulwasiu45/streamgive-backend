@@ -66,7 +66,7 @@ describe('OpenAPI documentation', () => {
 
     try {
       const paths = app.swagger().paths ?? {};
-      const missing = getRegisteredOperations(app.printRoutes())
+      const missing = getRegisteredOperations(app.printRoutes({ commonPrefix: false }))
         .filter(({ method, path }) => {
           if (
             OPENAPI_ROUTE_ALLOWLIST.has(`${method} ${path}`) ||
