@@ -4,7 +4,7 @@ const unitTests = [
   'test/cacheable.test.ts',
   'test/compression.test.ts',
   'test/config.test.ts',
-  'test/middleware/ownerAuth.test.ts',
+  'test/middleware/ownerAuthReplayCache.test.ts',
   'test/startupConfig.test.ts',
   'test/cors.test.ts',
   'test/slowRequestLog.test.ts',
