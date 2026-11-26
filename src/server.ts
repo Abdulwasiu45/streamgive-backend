@@ -1,6 +1,7 @@
 import Fastify from 'fastify';
 
 import { parseConfig } from './config.js';
+import { envInt } from './config/env.js';
 import { donorRoutes } from './routes/donors.js';
 import { impactRoutes } from './routes/impact.js';
 import { indexerStatusRoutes } from './routes/indexerStatus.js';
