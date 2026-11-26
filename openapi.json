@@ -93,7 +93,9 @@
     "/v1/ngos": {
       "get": {
         "summary": "List verified NGOs",
-        "tags": ["NGOs"],
+        "tags": [
+          "NGOs"
+        ],
         "parameters": [
           {
             "schema": {
@@ -118,7 +120,11 @@
           {
             "schema": {
               "type": "string",
-              "enum": ["newest", "oldest", "name"],
+              "enum": [
+                "newest",
+                "oldest",
+                "name"
+              ],
               "default": "newest"
             },
             "in": "query",
@@ -208,7 +214,9 @@
     "/v1/ngos/lookup": {
       "get": {
         "summary": "Find an NGO by Stellar address",
-        "tags": ["NGOs"],
+        "tags": [
+          "NGOs"
+        ],
         "parameters": [
           {
             "schema": {
@@ -230,7 +238,9 @@
     "/v1/ngos/{id}/donors": {
       "get": {
         "summary": "List donors for an NGO",
-        "tags": ["NGOs"],
+        "tags": [
+          "NGOs"
+        ],
         "parameters": [
           {
             "schema": {
@@ -271,7 +281,9 @@
     "/v1/ngos/{id}": {
       "get": {
         "summary": "Get an NGO profile and impact totals",
-        "tags": ["NGOs"],
+        "tags": [
+          "NGOs"
+        ],
         "parameters": [
           {
             "schema": {
@@ -366,7 +378,9 @@
     "/v1/donors/{address}/ngos": {
       "get": {
         "summary": "List distinct NGOs supported by a donor with token-grouped totals",
-        "tags": ["Donors"],
+        "tags": [
+          "Donors"
+        ],
         "parameters": [
           {
             "schema": {
@@ -451,7 +465,10 @@
           {
             "schema": {
               "type": "string",
-              "enum": ["ACTIVE", "CANCELLED"]
+              "enum": [
+                "ACTIVE",
+                "CANCELLED"
+              ]
             },
             "in": "query",
             "name": "status",
@@ -460,7 +477,8 @@
           {
             "schema": {
               "type": "string",
-              "format": "date-time"
+              "format": "date-time",
+              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
             },
             "in": "query",
             "name": "createdAfter",
@@ -469,7 +487,8 @@
           {
             "schema": {
               "type": "string",
-              "format": "date-time"
+              "format": "date-time",
+              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
             },
             "in": "query",
             "name": "createdBefore",
@@ -537,7 +556,9 @@
     "/v1/streams/{id}": {
       "get": {
         "summary": "Get a donation stream",
-        "tags": ["Streams"],
+        "tags": [
+          "Streams"
+        ],
         "parameters": [
           {
             "schema": {
@@ -602,7 +623,9 @@
     "/v1/streams/on-chain/{onChainId}": {
       "get": {
         "summary": "Get a donation stream by on-chain id",
-        "tags": ["Streams"],
+        "tags": [
+          "Streams"
+        ],
         "parameters": [
           {
             "schema": {
@@ -656,7 +679,9 @@
     "/v1/streams/{id}/activity": {
       "get": {
         "summary": "List activity events for a stream",
-        "tags": ["Streams"],
+        "tags": [
+          "Streams"
+        ],
         "description": "Returns on-chain events for the given stream, newest first, with cursor pagination.",
         "parameters": [
           {
@@ -729,7 +754,9 @@
     "/v1/tokens": {
       "get": {
         "summary": "List tokens used by streams",
-        "tags": ["Streams"],
+        "tags": [
+          "Streams"
+        ],
         "description": "Returns distinct stream token addresses with the number of streams for each.",
         "responses": {
           "200": {
@@ -758,7 +785,9 @@
     "/v1/impact/{ngoId}/timeseries": {
       "get": {
         "summary": "Get a daily time series of one NGO's streams and withdrawals",
-        "tags": ["Impact"],
+        "tags": [
+          "Impact"
+        ],
         "parameters": [
           {
             "schema": {
@@ -828,7 +857,9 @@
     "/v1/impact/{ngoId}": {
       "get": {
         "summary": "Get impact totals for one NGO",
-        "tags": ["Impact"],
+        "tags": [
+          "Impact"
+        ],
         "parameters": [
           {
             "schema": {
@@ -947,7 +978,9 @@
     "/v1/ngo-applications/status": {
       "get": {
         "summary": "Check an NGO application status",
-        "tags": ["NGOs"],
+        "tags": [
+          "NGOs"
+        ],
         "description": "Returns the status and timestamps, plus the review note after review, for the supplied owner address.",
         "parameters": [
           {
@@ -1133,7 +1166,9 @@
     "/v1/admin/dead-letters": {
       "get": {
         "summary": "List dead-lettered events",
-        "tags": ["Admin"],
+        "tags": [
+          "Admin"
+        ],
         "description": "Returns paginated dead-letter records with an optional resolved status filter.",
         "parameters": [
           {
@@ -1159,7 +1194,10 @@
           {
             "schema": {
               "type": "string",
-              "enum": ["true", "false"]
+              "enum": [
+                "true",
+                "false"
+              ]
             },
             "in": "query",
             "name": "resolved",
@@ -1224,7 +1262,9 @@
     "/v1/admin/dead-letters/{id}": {
       "get": {
         "summary": "Get a dead-lettered event",
-        "tags": ["Admin"],
+        "tags": [
+          "Admin"
+        ],
         "description": "Returns a dead-letter record by id, including its raw event payload.",
         "parameters": [
           {
@@ -1306,7 +1346,9 @@
     "/v1/admin/dead-letters/{id}/resolve": {
       "post": {
         "summary": "Resolve a dead-lettered event",
-        "tags": ["Admin"],
+        "tags": [
+          "Admin"
+        ],
         "description": "Marks a dead letter as resolved by the authenticated admin.",
         "requestBody": {
           "required": true,
@@ -1416,7 +1458,9 @@
     "/v1/admin/notification-endpoints": {
       "get": {
         "summary": "List notification endpoints",
-        "tags": ["Admin"],
+        "tags": [
+          "Admin"
+        ],
         "security": [
           {
             "AdminAddress": [],
@@ -1465,7 +1509,9 @@
       },
       "post": {
         "summary": "Create a notification endpoint",
-        "tags": ["Admin"],
+        "tags": [
+          "Admin"
+        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -1504,7 +1550,11 @@
                     "default": true
                   }
                 },
-                "required": ["url", "secret", "eventTypes"],
+                "required": [
+                  "url",
+                  "secret",
+                  "eventTypes"
+                ],
                 "additionalProperties": false
               }
             }
@@ -1568,7 +1618,9 @@
     "/v1/admin/notification-endpoints/{id}": {
       "patch": {
         "summary": "Update a notification endpoint",
-        "tags": ["Admin"],
+        "tags": [
+          "Admin"
+        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -1690,7 +1742,9 @@
       },
       "delete": {
         "summary": "Delete a notification endpoint",
-        "tags": ["Admin"],
+        "tags": [
+          "Admin"
+        ],
         "parameters": [
           {
             "schema": {
@@ -1763,7 +1817,9 @@
     "/v1/admin/notification-endpoints/{id}/test": {
       "post": {
         "summary": "Send a test ping to a notification endpoint",
-        "tags": ["Admin"],
+        "tags": [
+          "Admin"
+        ],
         "parameters": [
           {
             "schema": {
@@ -1844,7 +1900,9 @@
     "/v1/admin/notification-logs": {
       "get": {
         "summary": "List notification delivery logs",
-        "tags": ["Admin"],
+        "tags": [
+          "Admin"
+        ],
         "description": "Returns paginated delivery results filtered by event type, channel and success. Webhook URLs and secrets are never included.",
         "parameters": [
           {
@@ -1888,7 +1946,10 @@
           {
             "schema": {
               "type": "string",
-              "enum": ["true", "false"]
+              "enum": [
+                "true",
+                "false"
+              ]
             },
             "in": "query",
             "name": "success",
