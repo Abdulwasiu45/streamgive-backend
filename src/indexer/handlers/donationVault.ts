@@ -29,6 +29,27 @@ async function ensureNgo(db: DonationDb, ownerAddress: string) {
   });
 }
 
+const MAX_MEMO_LENGTH = 256;
+
+/** The optional memo of a `created` event: a non-empty string or UTF-8 bytes, capped at 256 characters. */
+function parseMemo(value: unknown): string | null {
+  const text =
+    typeof value === 'string'
+      ? value
+      : value instanceof Uint8Array
+        ? Buffer.from(value).toString('utf8')
+        : '';
+  return text === '' ? null : text.slice(0, MAX_MEMO_LENGTH);
+}
+
+/** The optional delayed start of a `created` event: seconds since the epoch, or null when absent or zero. */
+function parseStartsAt(value: unknown): Date | null {
+  const seconds = typeof value === 'bigint' ? Number(value) : value;
+  return typeof seconds === 'number' && Number.isFinite(seconds) && seconds > 0
+    ? new Date(seconds * 1000)
+    : null;
+}
+
 /**
  * Handles the donation-vault contract's `created` event, emitted when a
  * donor opens a new streaming donation to an NGO.
@@ -43,13 +64,19 @@ async function handleStreamCreated(event: ContractEvent): Promise<void> {
   const [, streamIdVal] = event.topic;
   const onChainId = scValToNative(streamIdVal) as bigint;
 
-  const [donorVal, ngoVal, tokenVal, depositVal, rateVal] = scValToNative(event.value) as [
+  const [donorVal, ngoVal, tokenVal, depositVal, rateVal, memoVal, startVal] = scValToNative(
+    event.value,
+  ) as [
     { toString(): string },
     { toString(): string },
     { toString(): string },
     bigint,
     bigint,
+    unknown?,
+    unknown?,
   ];
+  const memo = parseMemo(memoVal);
+  const startsAt = parseStartsAt(startVal);
 
   const { ngo } = await prisma.$transaction(async (tx) => {
     const [donor, ngo] = await Promise.all([
@@ -69,6 +96,8 @@ async function handleStreamCreated(event: ContractEvent): Promise<void> {
         withdrawn: '0',
         status: 'ACTIVE',
         createdTxHash: event.txHash,
+        memo,
+        startsAt,
         createdAt: new Date(event.ledgerClosedAt),
       },
       update: {},
@@ -86,6 +115,8 @@ async function handleStreamCreated(event: ContractEvent): Promise<void> {
           token: tokenVal.toString(),
           deposit: depositVal.toString(),
           rate: rateVal.toString(),
+          memo,
+          startsAt: startsAt?.toISOString() ?? null,
         },
       },
     });

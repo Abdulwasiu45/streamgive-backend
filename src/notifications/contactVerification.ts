@@ -114,6 +114,7 @@ export async function sendContactVerification(application: {
         to: [application.contactEmail],
         subject: email.subject,
         html: email.html,
+        text: email.text,
       }),
       // Abort if the provider accepts the connection but never responds — without
       // this the fetch hangs until the platform's own socket timeout fires, which

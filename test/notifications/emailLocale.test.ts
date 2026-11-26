@@ -41,6 +41,7 @@ describe('contactVerificationEmail', () => {
     expect(contactVerificationEmail(undefined, 'Test NGO', URL)).toEqual({
       subject: 'Verify your StreamGive NGO contact email',
       html: `<p>Hello Test NGO,</p><p><a href="${URL}">Verify this contact email</a>. This link expires in 24 hours.</p>`,
+      text: `Hello Test NGO,\n\nVerify this contact email: ${URL}\n\nThis link expires in 24 hours.`,
     });
   });
 
@@ -51,6 +52,7 @@ describe('contactVerificationEmail', () => {
     expect(email.html).toContain('Hola Test ONG,');
     expect(email.html).toContain('Verificar este correo de contacto');
     expect(email.html).toContain(`href="${URL}"`);
+    expect(email.text).toContain('Hola Test ONG,');
   });
 
   it('uses the English template for an unsupported locale', () => {

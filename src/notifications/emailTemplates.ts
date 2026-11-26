@@ -59,15 +59,16 @@ export function resolveEmailLocale(locale?: string | null): EmailLocale {
     : 'en';
 }
 
-/** Subject and HTML body of the contact verification email; every dynamic value is escaped. */
+/** Subject, HTML and plain text body of the contact verification email; every dynamic value is escaped or flattened. */
 export function contactVerificationEmail(
   locale: string | null | undefined,
   name: string,
   verificationUrl: string,
-): { subject: string; html: string } {
+): { subject: string; html: string; text: string } {
   const template = CONTACT_VERIFICATION[resolveEmailLocale(locale)];
   return {
     subject: template.subject,
     html: `<p>${template.greeting(escapeHtml(name))}</p><p><a href="${escapeHtml(verificationUrl)}">${template.linkLabel}</a>. ${template.expiry}</p>`,
+    text: `${template.greeting(name.replace(/\s+/g, ' '))}\n\n${template.linkLabel}: ${verificationUrl}\n\n${template.expiry}`,
   };
 }

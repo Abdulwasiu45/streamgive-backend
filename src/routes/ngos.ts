@@ -191,6 +191,8 @@ async function findNgoDetail(where: { id: string } | { ownerAddress: string }) {
         balance: true,
         withdrawn: true,
         status: true,
+        memo: true,
+        startsAt: true,
         createdAt: true,
       },
     }),
