@@ -57,10 +57,15 @@ export function parseTrustProxy(value: string | undefined): TrustProxySetting {
   }
   const num = Number(trimmed);
   if (!Number.isNaN(num) && Number.isInteger(num)) {
-    if (num <= 0) {
+    const hops = envInt(trimmed, 'TRUST_PROXY', {
+      min: -Number.MAX_SAFE_INTEGER,
+      max: Number.MAX_SAFE_INTEGER,
+    });
+    if (hops === undefined) return true;
+    if (hops <= 0) {
       return false;
     }
-    return (_address: string, hop: number) => hop < num;
+    return (_address: string, hop: number) => hop < hops;
   }
   if (trimmed.includes(',')) {
     return trimmed

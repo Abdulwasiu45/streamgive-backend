@@ -3,6 +3,8 @@ import { createHmac, randomUUID } from 'node:crypto';
 import { prisma } from '../db.js';
 import { logger } from '../logger.js';
 import { recordNotificationDelivery } from '../metrics.js';
+import { DEFAULT_NOTIFY_WEBHOOK_TIMEOUT_MS } from '../config.js';
+import { envInt } from '../config/env.js';
 import type { NotificationEvent } from './types.js';
 import { isSafeWebhookUrl } from './urlValidation.js';
 
@@ -36,7 +38,6 @@ function rememberDelivered(eventId: string): void {
 const SIGNATURE_HEADER = 'x-streamgive-signature';
 const DELIVERY_ID_HEADER = 'x-streamgive-delivery-id';
 const TIMESTAMP_HEADER = 'x-streamgive-timestamp';
-const DEFAULT_WEBHOOK_TIMEOUT_MS = 3_000;
 export const MAX_WEBHOOK_DELIVERY_ATTEMPTS = 5;
 const RETRY_BASE_MS = 1_000;
 const RETRY_MAX_MS = 60 * 60 * 1_000;
@@ -54,10 +55,11 @@ function webhookLocation(target: WebhookTarget): string {
 }
 
 function getWebhookTimeoutMs(): number {
-  const configured = Number(process.env.NOTIFY_WEBHOOK_TIMEOUT_MS);
-  return Number.isSafeInteger(configured) && configured > 0
-    ? Math.min(configured, 2_147_483_647)
-    : DEFAULT_WEBHOOK_TIMEOUT_MS;
+  const configured = envInt(process.env.NOTIFY_WEBHOOK_TIMEOUT_MS, 'NOTIFY_WEBHOOK_TIMEOUT_MS', {
+    defaultValue: DEFAULT_NOTIFY_WEBHOOK_TIMEOUT_MS,
+    min: 1,
+  });
+  return Math.min(configured, 2_147_483_647);
 }
 
 /** Posts one durable delivery attempt to its destination. */

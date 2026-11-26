@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+import { envDuration, envInt } from './config/env.js';
+
 export const DEFAULT_PORT = 3000;
 export const DEFAULT_RATE_LIMIT_MAX = 100;
 export const DEFAULT_RATE_LIMIT_WINDOW = '1 minute';
@@ -9,11 +11,12 @@ export const DEFAULT_CORS_ORIGIN = 'http://localhost:3001';
 export const DEFAULT_HEALTH_CHECK_TIMEOUT_MS = 3000;
 export const DEFAULT_INDEXER_LAG_THRESHOLD = 100;
 export const DEFAULT_INDEXER_POLL_INTERVAL_MS = 5000;
-export const DEFAULT_LOG_RETENTION_DAYS = 30;
+export const DEFAULT_LOG_RETENTION_DAYS = 90;
 export const DEFAULT_RATE_LIMIT_APPLICATION_MAX = 5;
 export const DEFAULT_RATE_LIMIT_APPLICATION_WINDOW = '1 minute';
 export const DEFAULT_NOTIFY_WEBHOOK_TIMEOUT_MS = 5000;
 export const DEFAULT_STREAM_RUNNING_LOW_DAYS = 7;
+export const DEFAULT_NOTIFY_WEBHOOK_TIMEOUT_MS = 3000;
 export const DEFAULT_SLOW_REQUEST_THRESHOLD_MS = 1000;
 export const DEFAULT_SHUTDOWN_TIMEOUT_MS = 30_000;
 export const MAINTENANCE_RETRY_AFTER_SECONDS = 300;
@@ -30,21 +33,7 @@ function configured(value: string | undefined): string | undefined {
  * gets the default, matching how the rest of the environment is read.
  */
 export function parsePort(value: string | undefined): number {
-  const raw = configured(value);
-  if (raw === undefined) {
-    return DEFAULT_PORT;
-  }
-
-  if (!/^\d+$/.test(raw)) {
-    throw new Error(`PORT must be an integer between 1 and 65535, received "${raw}"`);
-  }
-
-  const port = Number(raw);
-  if (!Number.isSafeInteger(port) || port < 1 || port > 65535) {
-    throw new Error(`PORT must be an integer between 1 and 65535, received "${raw}"`);
-  }
-
-  return port;
+  return envInt(value, 'PORT', { defaultValue: DEFAULT_PORT, min: 1, max: 65535 });
 }
 
 /**
@@ -53,27 +42,8 @@ export function parsePort(value: string | undefined): number {
  * intentional configuration.
  */
 export function parseRateLimitMax(value: string | undefined): number {
-  const raw = configured(value);
-  if (raw === undefined) {
-    return DEFAULT_RATE_LIMIT_MAX;
-  }
-
-  if (!/^\d+$/.test(raw)) {
-    throw new Error(`RATE_LIMIT_MAX must be a positive integer, received "${raw}"`);
-  }
-
-  const max = Number(raw);
-  if (!Number.isSafeInteger(max) || max < 1) {
-    throw new Error(`RATE_LIMIT_MAX must be a positive integer, received "${raw}"`);
-  }
-
-  return max;
+  return envInt(value, 'RATE_LIMIT_MAX', { defaultValue: DEFAULT_RATE_LIMIT_MAX, min: 1 });
 }
-
-// The units @fastify/rate-limit accepts for `timeWindow`, plus the bare
-// millisecond form documented in ENVIRONMENT.md ("1 minute" or "10000").
-const DURATION_PATTERN =
-  /^(\d+(?:\.\d+)?)\s*(ms|milliseconds?|s|secs?|seconds?|m|mins?|minutes?|h|hrs?|hours?|d|days?|w|weeks?|y|yrs?|years?)?$/i;
 
 /**
  * Validates RATE_LIMIT_WINDOW as a positive duration. The value is returned
@@ -82,20 +52,7 @@ const DURATION_PATTERN =
  * request instead of at startup.
  */
 export function parseRateLimitWindow(value: string | undefined): string {
-  const raw = configured(value);
-  if (raw === undefined) {
-    return DEFAULT_RATE_LIMIT_WINDOW;
-  }
-
-  const match = DURATION_PATTERN.exec(raw);
-  const amount = match === null ? Number.NaN : Number(match[1]);
-  if (match === null || !Number.isFinite(amount) || amount <= 0) {
-    throw new Error(
-      `RATE_LIMIT_WINDOW must be a positive duration such as "1 minute" or "10000", received "${raw}"`,
-    );
-  }
-
-  return raw;
+  return envDuration(value, 'RATE_LIMIT_WINDOW', DEFAULT_RATE_LIMIT_WINDOW);
 }
 
 /**
@@ -137,24 +94,15 @@ function positiveIntSchema(name: string, defaultValue: number) {
     .string()
     .optional()
     .transform((value, ctx) => {
-      const raw = configured(value);
-      if (raw === undefined) return defaultValue;
-      if (!/^\d+$/.test(raw)) {
+      try {
+        return envInt(value, name, { defaultValue, min: 1 });
+      } catch (error) {
         ctx.addIssue({
           code: 'custom',
-          message: `${name} must be a positive integer, received "${raw}"`,
+          message: error instanceof Error ? error.message : String(error),
         });
         return z.NEVER;
       }
-      const parsed = Number(raw);
-      if (!Number.isSafeInteger(parsed) || parsed < 1) {
-        ctx.addIssue({
-          code: 'custom',
-          message: `${name} must be a positive integer, received "${raw}"`,
-        });
-        return z.NEVER;
-      }
-      return parsed;
     });
 }
 
@@ -163,24 +111,15 @@ function nonNegativeIntSchema(name: string, defaultValue: number) {
     .string()
     .optional()
     .transform((value, ctx) => {
-      const raw = configured(value);
-      if (raw === undefined) return defaultValue;
-      if (!/^\d+$/.test(raw)) {
+      try {
+        return envInt(value, name, { defaultValue, min: 0 });
+      } catch (error) {
         ctx.addIssue({
           code: 'custom',
-          message: `${name} must be a non-negative integer, received "${raw}"`,
+          message: error instanceof Error ? error.message : String(error),
         });
         return z.NEVER;
       }
-      const parsed = Number(raw);
-      if (!Number.isSafeInteger(parsed) || parsed < 0) {
-        ctx.addIssue({
-          code: 'custom',
-          message: `${name} must be a non-negative integer, received "${raw}"`,
-        });
-        return z.NEVER;
-      }
-      return parsed;
     });
 }
 
@@ -189,24 +128,15 @@ function optionalPositiveIntSchema(name: string) {
     .string()
     .optional()
     .transform((value, ctx) => {
-      const raw = configured(value);
-      if (raw === undefined) return undefined;
-      if (!/^\d+$/.test(raw)) {
+      try {
+        return envInt(value, name, { min: 1 });
+      } catch (error) {
         ctx.addIssue({
           code: 'custom',
-          message: `${name} must be a positive integer, received "${raw}"`,
+          message: error instanceof Error ? error.message : String(error),
         });
         return z.NEVER;
       }
-      const parsed = Number(raw);
-      if (!Number.isSafeInteger(parsed) || parsed < 1) {
-        ctx.addIssue({
-          code: 'custom',
-          message: `${name} must be a positive integer, received "${raw}"`,
-        });
-        return z.NEVER;
-      }
-      return parsed;
     });
 }
 
@@ -215,18 +145,15 @@ function durationSchema(name: string, defaultValue: string) {
     .string()
     .optional()
     .transform((value, ctx) => {
-      const raw = configured(value);
-      if (raw === undefined) return defaultValue;
-      const match = DURATION_PATTERN.exec(raw);
-      const amount = match === null ? Number.NaN : Number(match[1]);
-      if (match === null || !Number.isFinite(amount) || amount <= 0) {
+      try {
+        return envDuration(value, name, defaultValue);
+      } catch (error) {
         ctx.addIssue({
           code: 'custom',
-          message: `${name} must be a positive duration such as "1 minute" or "10000", received "${raw}"`,
+          message: error instanceof Error ? error.message : String(error),
         });
         return z.NEVER;
       }
-      return raw;
     });
 }
 
@@ -438,32 +365,16 @@ export function parseMaintenanceMode(value: string | undefined): boolean {
  * as warnings. `0` turns the warning off.
  */
 export function parseSlowRequestThresholdMs(value: string | undefined): number {
-  const raw = configured(value);
-  if (raw === undefined) {
-    return DEFAULT_SLOW_REQUEST_THRESHOLD_MS;
-  }
-
-  if (!/^\d+$/.test(raw) || !Number.isSafeInteger(Number(raw))) {
-    throw new Error(
-      `SLOW_REQUEST_THRESHOLD_MS must be a non-negative integer (milliseconds), received "${raw}"`,
-    );
-  }
-
-  return Number(raw);
+  return envInt(value, 'SLOW_REQUEST_THRESHOLD_MS', {
+    defaultValue: DEFAULT_SLOW_REQUEST_THRESHOLD_MS,
+    min: 0,
+  });
 }
 
 /** Validates SHUTDOWN_TIMEOUT_MS as a positive integer duration. */
 export function parseShutdownTimeoutMs(value: string | undefined): number {
-  const raw = configured(value);
-  if (raw === undefined) {
-    return DEFAULT_SHUTDOWN_TIMEOUT_MS;
-  }
-
-  if (!/^\d+$/.test(raw) || !Number.isSafeInteger(Number(raw)) || Number(raw) < 1) {
-    throw new Error(
-      `SHUTDOWN_TIMEOUT_MS must be a positive integer (milliseconds), received "${raw}"`,
-    );
-  }
-
-  return Number(raw);
+  return envInt(value, 'SHUTDOWN_TIMEOUT_MS', {
+    defaultValue: DEFAULT_SHUTDOWN_TIMEOUT_MS,
+    min: 1,
+  });
 }

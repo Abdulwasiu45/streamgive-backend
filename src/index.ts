@@ -13,6 +13,7 @@ import { buildServer } from './server.js';
 
 function fail(message: string): never {
   // Print every configuration problem at once rather than a stack trace from listen().
+  process.stderr.write(`${message}\n`);
   logger.error({ message }, 'Configuration Error');
   process.exit(1);
 }
