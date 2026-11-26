@@ -134,6 +134,35 @@ duplicate ID to prevent replays within the timestamp window. Rotate the secret
 by updating the destination, deploying the same value to the receiver, and only
 then removing the old one.
 
+## Rotating a secret without dropping deliveries
+
+Changing an endpoint's secret does not break the receiver at the moment of the
+change. When an operator sends a new `secret` in
+`PATCH /v1/admin/notification-endpoints/:id`, the old secret is kept as the
+endpoint's previous secret for 24 hours. During that overlap every delivery
+(and `ping`) carries two signatures over the same timestamp, delivery id and
+body:
+
+- `x-streamgive-signature: v1=<hex>` made with the **new** secret, exactly as
+  before;
+- `x-streamgive-signature-previous: v1=<hex>` made with the **previous** secret.
+
+Rotate in this order:
+
+1. Operator: `PATCH` the endpoint with the new `secret`. The response shows
+   `previousSecretExpiresAt`, the end of the overlap.
+2. Receiver: deploy the new secret and verify `x-streamgive-signature` with it.
+   Until then, keep verifying `x-streamgive-signature-previous` with the old
+   secret; a request is genuine if either header verifies.
+3. Receiver: once the new secret is live everywhere, stop reading the previous
+   header. After `previousSecretExpiresAt` StreamGive stops sending it.
+
+Rotating again during an overlap replaces the previous secret with the one that
+was current, so only one older secret is ever accepted. A `PATCH` that repeats
+the current secret changes nothing. Retries of a delivery queued before the
+rotation keep using the secrets it was queued with, and the previous signature
+is dropped from a retry sent after the overlap ends.
+
 ## Answer quickly
 
 Do the minimum inside the request: verify, persist or enqueue, return `2xx`.

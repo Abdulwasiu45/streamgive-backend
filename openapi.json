@@ -347,6 +347,25 @@
         }
       }
     },
+    "/v1/ngos/{id}/withdrawals.csv": {
+      "get": {
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "id",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
     "/v1/donors": {
       "get": {
         "responses": {
@@ -467,6 +486,7 @@
               "type": "string",
               "enum": [
                 "ACTIVE",
+                "PAUSED",
                 "CANCELLED"
               ]
             },
@@ -1976,6 +1996,54 @@
             }
           },
           "400": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/admin/overview": {
+      "get": {
+        "summary": "Admin overview of queue sizes and failures",
+        "tags": ["Admin"],
+        "security": [
+          {
+            "AdminAddress": [],
+            "AdminSignature": [],
+            "AdminTimestamp": []
+          }
+        ],
+        "responses": {
+          "200": {
             "description": "Default Response",
             "content": {
               "application/json": {

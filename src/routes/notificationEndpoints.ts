@@ -3,7 +3,7 @@ import { z } from 'zod';
 
 import { prisma } from '../db.js';
 import { requireAdminSignature } from '../middleware/adminAuth.js';
-import { sendWebhookPing } from '../notifications/service.js';
+import { SECRET_ROTATION_OVERLAP_MS, sendWebhookPing } from '../notifications/service.js';
 import { NOTIFICATION_EVENT_TYPES } from '../notifications/types.js';
 import { isSafeWebhookUrl } from '../notifications/urlValidation.js';
 
@@ -36,9 +36,10 @@ function publicEndpoint(endpoint: {
   createdAt: Date;
   updatedAt: Date;
   secret: string;
+  previousSecretExpiresAt: Date | null;
 }) {
-  const { id, url, eventTypes, enabled, createdAt, updatedAt } = endpoint;
-  return { id, url, eventTypes, enabled, createdAt, updatedAt };
+  const { id, url, eventTypes, enabled, createdAt, updatedAt, previousSecretExpiresAt } = endpoint;
+  return { id, url, eventTypes, enabled, createdAt, updatedAt, previousSecretExpiresAt };
 }
 
 export async function notificationEndpointRoutes(app: FastifyInstance): Promise<void> {
@@ -156,13 +157,25 @@ export async function notificationEndpointRoutes(app: FastifyInstance): Promise<
 
       const exists = await prisma.notificationEndpoint.findUnique({
         where: { id: parsedParams.data.id },
-        select: { id: true },
+        select: { id: true, secret: true },
       });
       if (!exists) return reply.code(404).send({ error: 'not_found' });
 
+      // Changing the secret keeps the old one signing for the overlap period, so
+      // receivers can switch over without a window where signatures fail.
+      const rotating =
+        parsedBody.data.secret !== undefined && parsedBody.data.secret !== exists.secret;
       const endpoint = await prisma.notificationEndpoint.update({
         where: { id: parsedParams.data.id },
-        data: parsedBody.data,
+        data: {
+          ...parsedBody.data,
+          ...(rotating
+            ? {
+                previousSecret: exists.secret,
+                previousSecretExpiresAt: new Date(Date.now() + SECRET_ROTATION_OVERLAP_MS),
+              }
+            : {}),
+        },
       });
       return publicEndpoint(endpoint);
     },
@@ -202,7 +215,13 @@ export async function notificationEndpointRoutes(app: FastifyInstance): Promise<
       }
       const endpoint = await prisma.notificationEndpoint.findUnique({
         where: { id: parsedParams.data.id },
-        select: { id: true, url: true, secret: true },
+        select: {
+          id: true,
+          url: true,
+          secret: true,
+          previousSecret: true,
+          previousSecretExpiresAt: true,
+        },
       });
       if (!endpoint) return reply.code(404).send({ error: 'not_found' });
       return sendWebhookPing(endpoint);

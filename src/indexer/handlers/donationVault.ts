@@ -296,10 +296,118 @@ async function handleCancel(event: ContractEvent): Promise<void> {
 }
 
 /**
+ * Handles the donation-vault contract's `pause` event, emitted when a donor
+ * pauses an active stream.
+ *
+ * Writes: sets the matching `stream` row to `PAUSED` and records when in
+ * `pausedAt`, leaving `updatedAt` (the settlement time the remaining-time
+ * calculation counts from) untouched. Persists a `StreamEvent` row in the same
+ * transaction. Idempotent: a replayed event, or one for a stream that is not
+ * `ACTIVE`, changes nothing and writes no second row.
+ */
+async function handlePause(event: ContractEvent): Promise<void> {
+  const [, streamIdVal] = event.topic;
+  const onChainId = scValToNative(streamIdVal) as bigint;
+
+  await prisma.$transaction(async (tx) => {
+    const stream = await tx.stream.findUnique({ where: { onChainId } });
+    if (!stream) {
+      logger.warn(
+        { eventId: event.id, streamId: onChainId.toString() },
+        'pause event received for unknown stream',
+      );
+      await recordDeadLetter(event, new Error(`unknown stream: ${onChainId}`));
+      return;
+    }
+
+    if (stream.status !== 'ACTIVE') {
+      logger.warn(
+        { eventId: event.id, streamId: onChainId.toString(), status: stream.status },
+        'ignoring pause event for a stream that is not active',
+      );
+      return;
+    }
+
+    const pausedAt = new Date(event.ledgerClosedAt);
+    await tx.stream.update({
+      where: { onChainId },
+      data: { status: 'PAUSED', pausedAt, updatedAt: stream.updatedAt },
+    });
+
+    await tx.streamEvent.create({
+      data: {
+        type: 'pause',
+        streamId: onChainId,
+        ledger: event.ledger,
+        txHash: event.txHash,
+        payload: { pausedAt: pausedAt.toISOString() },
+      },
+    });
+  });
+}
+
+/**
+ * Handles the donation-vault contract's `resume` event, emitted when a donor
+ * resumes a paused stream.
+ *
+ * Writes: sets the matching `stream` row back to `ACTIVE`, clears `pausedAt`
+ * and moves `updatedAt` forward by the time spent paused, so the paused period
+ * does not count against the remaining time. Persists a `StreamEvent` row in
+ * the same transaction. Idempotent: a replayed event, or one for a stream that
+ * is not `PAUSED`, changes nothing and writes no second row.
+ */
+async function handleResume(event: ContractEvent): Promise<void> {
+  const [, streamIdVal] = event.topic;
+  const onChainId = scValToNative(streamIdVal) as bigint;
+
+  await prisma.$transaction(async (tx) => {
+    const stream = await tx.stream.findUnique({ where: { onChainId } });
+    if (!stream) {
+      logger.warn(
+        { eventId: event.id, streamId: onChainId.toString() },
+        'resume event received for unknown stream',
+      );
+      await recordDeadLetter(event, new Error(`unknown stream: ${onChainId}`));
+      return;
+    }
+
+    if (stream.status !== 'PAUSED') {
+      logger.warn(
+        { eventId: event.id, streamId: onChainId.toString(), status: stream.status },
+        'ignoring resume event for a stream that is not paused',
+      );
+      return;
+    }
+
+    const resumedAt = new Date(event.ledgerClosedAt);
+    const pausedMs = stream.pausedAt ? Math.max(0, resumedAt.getTime() - stream.pausedAt.getTime()) : 0;
+    await tx.stream.update({
+      where: { onChainId },
+      data: {
+        status: 'ACTIVE',
+        pausedAt: null,
+        updatedAt: new Date(stream.updatedAt.getTime() + pausedMs),
+      },
+    });
+
+    await tx.streamEvent.create({
+      data: {
+        type: 'resume',
+        streamId: onChainId,
+        ledger: event.ledger,
+        txHash: event.txHash,
+        payload: { resumedAt: resumedAt.toISOString(), pausedMs },
+      },
+    });
+  });
+}
+
+/**
  * Entry point for all donation-vault contract events. Dispatches on the
  * event's topic to the handler for that on-chain event:
  * `created` → {@link handleStreamCreated}, `withdraw` → {@link handleWithdraw},
- * `cancel` → {@link handleCancel}. `topup` and `ratemod` are deliberately
+ * `cancel` → {@link handleCancel}, `pause` → {@link handlePause}, `resume` →
+ * {@link handleResume}. `topup` and `ratemod` are deliberately
  * unhandled for now (see comment below); any other topic is ignored.
  */
 export async function handleDonationVaultEvent(event: ContractEvent): Promise<void> {
@@ -315,6 +423,14 @@ export async function handleDonationVaultEvent(event: ContractEvent): Promise<vo
       break;
     case 'cancel':
       await handleCancel(event);
+      break;
+    case 'pause':
+    case 'paused':
+      await handlePause(event);
+      break;
+    case 'resume':
+    case 'resumed':
+      await handleResume(event);
       break;
     case 'topup':
     case 'ratemod':

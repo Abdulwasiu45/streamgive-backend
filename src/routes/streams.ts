@@ -5,10 +5,11 @@ import { z } from 'zod';
 import { prisma } from '../db.js';
 import { sendPublicCacheable } from './cacheable.js';
 import { getPublicNgoName } from './ngoName.js';
+import { remainingSeconds } from './streamTiming.js';
 
 /**
  * Query for GET /v1/streams: optional Stellar `donor` and `ngoAddress`,
- * NGO UUID `ngo`, contract-address `token`, `ACTIVE`/`CANCELLED` status,
+ * NGO UUID `ngo`, contract-address `token`, `ACTIVE`/`PAUSED`/`CANCELLED` status,
  * inclusive `createdAt` bounds, `limit` from 1–100 (default 100), and an
  * optional stream UUID `cursor`.
  */
@@ -30,7 +31,7 @@ const querySchema = z.object({
       message: 'Invalid Stellar contract address',
     })
     .optional(),
-  status: z.enum(['ACTIVE', 'CANCELLED']).optional(),
+  status: z.enum(['ACTIVE', 'PAUSED', 'CANCELLED']).optional(),
   createdAfter: z.iso
     .datetime({ offset: true })
     .transform((value) => new Date(value))
@@ -238,7 +239,10 @@ export async function streamRoutes(app: FastifyInstance): Promise<void> {
         return reply.code(404).send({ error: 'not_found' });
       }
 
-      return sendPublicCacheable(request, reply, serializeStream(stream));
+      return sendPublicCacheable(request, reply, {
+        ...serializeStream(stream),
+        remainingSeconds: remainingSeconds(stream),
+      });
     },
   );
 
@@ -284,7 +288,10 @@ export async function streamRoutes(app: FastifyInstance): Promise<void> {
         return reply.code(404).send({ error: 'not_found' });
       }
 
-      return sendPublicCacheable(request, reply, serializeStream(stream));
+      return sendPublicCacheable(request, reply, {
+        ...serializeStream(stream),
+        remainingSeconds: remainingSeconds(stream),
+      });
     },
   );
 
