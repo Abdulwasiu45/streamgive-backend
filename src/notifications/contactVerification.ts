@@ -108,6 +108,7 @@ export async function sendContactVerification(application: {
         to: [application.contactEmail],
         subject: 'Verify your StreamGive NGO contact email',
         html: `<p>Hello ${escapeHtml(application.name)},</p><p><a href="${verificationUrl.toString()}">Verify this contact email</a>. This link expires in 24 hours.</p>`,
+        text: `Hello ${application.name.replace(/\s+/g, ' ')},\n\nVerify this contact email: ${verificationUrl.toString()}\n\nThis link expires in 24 hours.`,
       }),
       // Abort if the provider accepts the connection but never responds — without
       // this the fetch hangs until the platform's own socket timeout fires, which
