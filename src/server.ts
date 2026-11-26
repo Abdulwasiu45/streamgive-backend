@@ -2,6 +2,7 @@ import Fastify from 'fastify';
 
 import { parseConfig } from './config.js';
 import { envInt } from './config/env.js';
+import { donorEmailAlertRoutes } from './routes/donorEmailAlerts.js';
 import { adminOverviewRoutes } from './routes/adminOverview.js';
 import { donorRoutes } from './routes/donors.js';
 import { impactRoutes } from './routes/impact.js';
@@ -121,6 +122,7 @@ export function buildServer(options?: BuildServerOptions) {
   const apiPrefix = { prefix: '/v1' };
   app.register(ngoRoutes, apiPrefix);
   app.register(donorRoutes, apiPrefix);
+  app.register(donorEmailAlertRoutes, apiPrefix);
   app.register(streamRoutes, apiPrefix);
   app.register(tokenRoutes, apiPrefix);
   app.register(impactRoutes, apiPrefix);

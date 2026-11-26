@@ -12,7 +12,8 @@ export const APPLICATION_CHALLENGE_TTL_MS = 5 * 60 * 1000;
  * trimming — whitespace-only values are rejected); `contactEmail` is a
  * required email (max 254 characters per RFC 5321); optional `website` is
  * normalized to HTTPS when scheme-less, must be a URL, and is capped at 2048
- * characters; optional `country` is at most 100 characters. `challenge` and
+ * characters; optional `country` is at most 100 characters; optional `locale` is a
+ * BCP 47 language tag of at most 35 characters. `challenge` and
  * `signature` prove control of ownerAddress.
  */
 export const applicationSchema = z.object({
@@ -29,6 +30,13 @@ export const applicationSchema = z.object({
     .optional(),
   contactEmail: z.string().email().max(254),
   country: z.string().max(100).optional(),
+  // Optional BCP 47 language tag (e.g. `es`, `pt-BR`) used to pick the email template.
+  locale: z
+    .string()
+    .trim()
+    .max(35)
+    .regex(/^[A-Za-z]{2,3}(?:[-_][A-Za-z0-9]{2,8}){0,3}$/)
+    .optional(),
 });
 
 export const applicationSubmissionSchema = applicationSchema.extend({

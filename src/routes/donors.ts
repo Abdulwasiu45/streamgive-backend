@@ -26,6 +26,12 @@ const addressParamSchema = z.object({
 });
 const STREAMS_CSV_BATCH_SIZE = 500;
 
+/** Query for GET /v1/donors/:address/activity: `limit` is 1–100 (default 100), `cursor` an event UUID. */
+const activityQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(100).default(100),
+  cursor: z.string().uuid().optional(),
+});
+
 /**
  * Helper to escape a value for CSV with RFC 4180 rules and formula injection protection.
  */
@@ -364,5 +370,67 @@ export async function donorRoutes(app: FastifyInstance): Promise<void> {
     );
 
     return reply.send(csv);
+  });
+
+  /**
+   * Lists the stored events of all of a donor's streams in one feed, newest first.
+   * @route GET /v1/donors/:address/activity
+   * @param address Stellar public key
+   * @query limit, cursor (an event id from the previous page's `nextCursor`)
+   * @auth Public
+   * @returns 200 `{ events: StreamEvent[], hasMore: boolean, nextCursor: string | null }` with `streamId` as a string; 400 invalid address, query or unknown cursor; 404 `{ error: "not_found" }` for an unknown donor.
+   */
+  app.get('/donors/:address/activity', async (request, reply) => {
+    const parsedParams = addressParamSchema.safeParse(request.params);
+    const parsedQuery = activityQuerySchema.safeParse(request.query);
+    if (!parsedParams.success || !parsedQuery.success) {
+      return reply.code(400).send({ error: 'invalid_request' });
+    }
+    const { limit, cursor } = parsedQuery.data;
+
+    const donor = await prisma.donor.findUnique({
+      where: { address: parsedParams.data.address },
+      select: { id: true },
+    });
+    if (!donor) {
+      return reply.code(404).send({ error: 'not_found' });
+    }
+
+    // An unknown cursor would silently look like an empty last page.
+    if (cursor) {
+      const cursorEvent = await prisma.streamEvent.findUnique({
+        where: { id: cursor },
+        select: { id: true },
+      });
+      if (!cursorEvent) {
+        return reply.code(400).send({ error: 'invalid_request' });
+      }
+    }
+
+    const streams = await prisma.stream.findMany({
+      where: { donorId: donor.id },
+      select: { onChainId: true },
+    });
+    const rows =
+      streams.length === 0
+        ? []
+        : await prisma.streamEvent.findMany({
+            where: { streamId: { in: streams.map((stream) => stream.onChainId) } },
+            orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+            take: limit + 1,
+            ...(cursor ? { skip: 1, cursor: { id: cursor } } : {}),
+          });
+
+    const hasMore = rows.length > limit;
+    const events = hasMore ? rows.slice(0, limit) : rows;
+
+    return sendPublicCacheable(request, reply, {
+      events: events.map(({ streamId, ...event }) => ({
+        ...event,
+        streamId: streamId === null ? null : streamId.toString(),
+      })),
+      hasMore,
+      nextCursor: hasMore ? (events.at(-1)?.id ?? null) : null,
+    });
   });
 }

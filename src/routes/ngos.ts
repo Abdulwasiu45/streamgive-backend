@@ -10,6 +10,7 @@ import { escapeCsvField } from './donors.js';
 import { requireAdminSignature } from '../middleware/adminAuth.js';
 import { requireOwnerSignature } from '../middleware/ownerAuth.js';
 import { getPublicNgoName } from './ngoName.js';
+import { serializeStream } from './streams.js';
 import { isVerifiedAt } from './ngoVerification.js';
 import { committedTotalsByToken } from './tokenTotals.js';
 
@@ -91,6 +92,18 @@ const listQuerySchema = z.object({
   // Name search: case-insensitive substring match, capped to prevent abuse.
   q: z.string().max(100).optional(),
 });
+
+/** NGO streams query: optional `status`, `limit` from 1–100 (default 100) and optional stream UUID `cursor`. */
+const ngoStreamsQuerySchema = z.object({
+  status: z.enum(['ACTIVE', 'CANCELLED']).optional(),
+  limit: z.coerce.number().int().min(1).max(100).default(100),
+  cursor: z.string().uuid().optional(),
+});
+
+const ngoStreamInclude = {
+  donor: { select: { address: true } },
+  ngo: { select: { id: true, name: true, displayName: true, ownerAddress: true } },
+} as const;
 
 /** Donor-list query: `limit` from 1–100 (default 100) and optional donor UUID `cursor`. */
 const donorListQuerySchema = z.object({
@@ -366,6 +379,57 @@ export async function ngoRoutes(app: FastifyInstance): Promise<void> {
     }
 
     return sendPublicCacheable(request, reply, ngo);
+  });
+
+  /**
+   * Lists the streams paying one NGO, newest first, with an optional status filter.
+   * @route GET /v1/ngos/:id/streams
+   * @param id NGO UUID
+   * @query status, limit, cursor (a stream id from the previous page's `nextCursor`)
+   * @auth Public
+   * @returns 200 `{ streams: Stream[], hasMore: boolean, nextCursor: string | null }`; 400 invalid id, query or unknown cursor; 404 `{ error: "not_found" }`.
+   */
+  app.get('/ngos/:id/streams', async (request, reply) => {
+    const parsedParams = idParamSchema.safeParse(request.params);
+    const parsedQuery = ngoStreamsQuerySchema.safeParse(request.query);
+    if (!parsedParams.success || !parsedQuery.success) {
+      return reply.code(400).send({ error: 'invalid_request' });
+    }
+    const { status, limit, cursor } = parsedQuery.data;
+    const ngoId = parsedParams.data.id;
+
+    const ngo = await prisma.ngo.findUnique({ where: { id: ngoId }, select: { id: true } });
+    if (!ngo) {
+      return reply.code(404).send({ error: 'not_found' });
+    }
+
+    // A cursor that is not one of this NGO's streams would look like an empty last page.
+    if (cursor) {
+      const cursorStream = await prisma.stream.findFirst({
+        where: { id: cursor, ngoId },
+        select: { id: true },
+      });
+      if (!cursorStream) {
+        return reply.code(400).send({ error: 'invalid_request' });
+      }
+    }
+
+    const rows = await prisma.stream.findMany({
+      where: { ngoId, ...(status ? { status } : {}) },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      take: limit + 1,
+      ...(cursor ? { skip: 1, cursor: { id: cursor } } : {}),
+      include: ngoStreamInclude,
+    });
+
+    const hasMore = rows.length > limit;
+    const streams = hasMore ? rows.slice(0, limit) : rows;
+
+    return sendPublicCacheable(request, reply, {
+      streams: streams.map(serializeStream),
+      hasMore,
+      nextCursor: hasMore ? (streams.at(-1)?.id ?? null) : null,
+    });
   });
 
   /**
