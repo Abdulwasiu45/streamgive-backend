@@ -7,6 +7,7 @@ export async function resetDb(): Promise<void> {
   try {
     await prisma.idempotencyRecord.deleteMany();
     await prisma.webhookDelivery.deleteMany();
+    await prisma.adminAuditLog.deleteMany();
     await prisma.notificationEndpoint.deleteMany();
     await prisma.notificationLog.deleteMany();
     await prisma.streamEvent.deleteMany();

@@ -27,6 +27,17 @@ export function sendPublicCacheable<T>(
   const body = JSON.stringify(payload) ?? '';
   const etag = `"${createHash('sha256').update(body).digest('base64url')}"`;
 
+  const varyHeader = reply.getHeader('Vary');
+  const varyValues = Array.isArray(varyHeader)
+    ? varyHeader
+    : typeof varyHeader === 'string'
+      ? varyHeader.split(',')
+      : [];
+  const normalizedVary = varyValues.map((value) => value.trim().toLowerCase());
+  if (!normalizedVary.includes('*') && !normalizedVary.includes('accept-encoding')) {
+    reply.header('Vary', [...varyValues, 'Accept-Encoding'].filter(Boolean).join(', '));
+  }
+
   reply
     .header('Cache-Control', `public, max-age=${PUBLIC_MAX_AGE_SECONDS}, stale-while-revalidate=60`)
     .header('ETag', etag);

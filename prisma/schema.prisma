@@ -72,6 +72,8 @@ model Stream {
   balance       String
   withdrawn     String
   status        StreamStatus @default(ACTIVE)
+  /// Set after the one-time stream_running_low notification is queued.
+  runningLowNotifiedAt DateTime? @map("running_low_notified_at")
   /// Transaction hash of the on-chain transaction that created this stream.
   /// Null for streams indexed before this field was added.
   createdTxHash String?      @map("created_tx_hash")
@@ -82,6 +84,7 @@ model Stream {
   @@index([ngoId])
   @@index([createdAt])
   @@index([status])
+  @@index([status, runningLowNotifiedAt])
   @@index([tokenAddress])
   @@index([ngoId, createdAt])
   @@map("streams")
@@ -172,6 +175,24 @@ model NotificationLog {
 
   @@unique([eventId, channel])
   @@map("notification_logs")
+}
+
+/// Immutable record of a successful signed-admin mutation. Summaries are
+/// deliberately written without request bodies so secrets and sensitive
+/// submitted values are never copied into the audit trail.
+model AdminAuditLog {
+  id           String   @id @default(uuid())
+  adminAddress String   @map("admin_address")
+  action       String
+  targetId     String   @map("target_id")
+  summary      String   @db.VarChar(240)
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  @@index([createdAt, id])
+  @@index([adminAddress, createdAt])
+  @@index([action, createdAt])
+  @@index([targetId, createdAt])
+  @@map("admin_audit_logs")
 }
 
 /// Configured webhook destinations. Event names are stored as strings so a

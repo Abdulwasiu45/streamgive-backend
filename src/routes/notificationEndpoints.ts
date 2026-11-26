@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 
+import { recordAdminAction } from '../audit/adminAudit.js';
 import { prisma } from '../db.js';
 import { requireAdminSignature } from '../middleware/adminAuth.js';
 import { sendWebhookPing } from '../notifications/service.js';
@@ -102,8 +103,21 @@ export async function notificationEndpointRoutes(app: FastifyInstance): Promise<
         return reply.code(400).send({ error: 'invalid_request' });
       }
 
-      const endpoint = await prisma.notificationEndpoint.create({
-        data: parsed.data,
+      const adminAddress = request.headers['x-admin-address'];
+      if (typeof adminAddress !== 'string') {
+        return reply.code(401).send({ error: 'unauthorized' });
+      }
+
+      const endpoint = await prisma.$transaction(async (tx) => {
+        const created = await tx.notificationEndpoint.create({ data: parsed.data });
+        await recordAdminAction(
+          tx,
+          adminAddress,
+          'notification_endpoint.created',
+          created.id,
+          'Created notification endpoint',
+        );
+        return created;
       });
       return reply.code(201).send(publicEndpoint(endpoint));
     },
@@ -154,16 +168,32 @@ export async function notificationEndpointRoutes(app: FastifyInstance): Promise<
         return reply.code(400).send({ error: 'invalid_request' });
       }
 
-      const exists = await prisma.notificationEndpoint.findUnique({
-        where: { id: parsedParams.data.id },
-        select: { id: true },
-      });
-      if (!exists) return reply.code(404).send({ error: 'not_found' });
+      const adminAddress = request.headers['x-admin-address'];
+      if (typeof adminAddress !== 'string') {
+        return reply.code(401).send({ error: 'unauthorized' });
+      }
 
-      const endpoint = await prisma.notificationEndpoint.update({
-        where: { id: parsedParams.data.id },
-        data: parsedBody.data,
+      const endpoint = await prisma.$transaction(async (tx) => {
+        const exists = await tx.notificationEndpoint.findUnique({
+          where: { id: parsedParams.data.id },
+          select: { id: true },
+        });
+        if (!exists) return null;
+
+        const updated = await tx.notificationEndpoint.update({
+          where: { id: parsedParams.data.id },
+          data: parsedBody.data,
+        });
+        await recordAdminAction(
+          tx,
+          adminAddress,
+          'notification_endpoint.updated',
+          updated.id,
+          'Updated notification endpoint',
+        );
+        return updated;
       });
+      if (!endpoint) return reply.code(404).send({ error: 'not_found' });
       return publicEndpoint(endpoint);
     },
   );
@@ -205,7 +235,20 @@ export async function notificationEndpointRoutes(app: FastifyInstance): Promise<
         select: { id: true, url: true, secret: true },
       });
       if (!endpoint) return reply.code(404).send({ error: 'not_found' });
-      return sendWebhookPing(endpoint);
+
+      const result = await sendWebhookPing(endpoint);
+      const adminAddress = request.headers['x-admin-address'];
+      if (typeof adminAddress !== 'string') {
+        return reply.code(401).send({ error: 'unauthorized' });
+      }
+      await recordAdminAction(
+        prisma,
+        adminAddress,
+        'notification_endpoint.tested',
+        endpoint.id,
+        'Sent notification endpoint test ping',
+      );
+      return result;
     },
   );
 
@@ -236,8 +279,25 @@ export async function notificationEndpointRoutes(app: FastifyInstance): Promise<
         return reply.code(400).send({ error: 'invalid_request' });
       }
 
-      const deleted = await prisma.notificationEndpoint.deleteMany({
-        where: { id: parsedParams.data.id },
+      const adminAddress = request.headers['x-admin-address'];
+      if (typeof adminAddress !== 'string') {
+        return reply.code(401).send({ error: 'unauthorized' });
+      }
+
+      const deleted = await prisma.$transaction(async (tx) => {
+        const result = await tx.notificationEndpoint.deleteMany({
+          where: { id: parsedParams.data.id },
+        });
+        if (result.count > 0) {
+          await recordAdminAction(
+            tx,
+            adminAddress,
+            'notification_endpoint.deleted',
+            parsedParams.data.id,
+            'Deleted notification endpoint',
+          );
+        }
+        return result;
       });
       if (deleted.count === 0) return reply.code(404).send({ error: 'not_found' });
       return reply.code(204).send();

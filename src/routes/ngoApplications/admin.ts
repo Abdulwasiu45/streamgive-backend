@@ -1,5 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 
+import { recordAdminAction } from '../../audit/adminAudit.js';
 import { prisma } from '../../db.js';
 import { requireAdminSignature } from '../../middleware/adminAuth.js';
 import { requireOwnerSignature } from '../../middleware/ownerAuth.js';
@@ -158,14 +159,24 @@ export async function ngoApplicationAdminRoutes(app: FastifyInstance): Promise<v
       }
 
       try {
-        const reviewed = await prisma.ngoApplication.update({
-          where: { id, status: 'PENDING' },
-          data: {
-            status: 'APPROVED',
-            reviewNote: parsed.data?.reviewNote,
+        const reviewed = await prisma.$transaction(async (tx) => {
+          const updated = await tx.ngoApplication.update({
+            where: { id, status: 'PENDING' },
+            data: {
+              status: 'APPROVED',
+              reviewNote: parsed.data?.reviewNote,
+              reviewedBy,
+              reviewedAt: new Date(),
+            },
+          });
+          await recordAdminAction(
+            tx,
             reviewedBy,
-            reviewedAt: new Date(),
-          },
+            'ngo_application.approved',
+            updated.id,
+            'Approved NGO application',
+          );
+          return updated;
         });
         await notify({
           type: 'application_reviewed',
@@ -228,14 +239,24 @@ export async function ngoApplicationAdminRoutes(app: FastifyInstance): Promise<v
       }
 
       try {
-        const reviewed = await prisma.ngoApplication.update({
-          where: { id, status: 'PENDING' },
-          data: {
-            status: 'REJECTED',
-            reviewNote: parsed.data?.reviewNote,
+        const reviewed = await prisma.$transaction(async (tx) => {
+          const updated = await tx.ngoApplication.update({
+            where: { id, status: 'PENDING' },
+            data: {
+              status: 'REJECTED',
+              reviewNote: parsed.data?.reviewNote,
+              reviewedBy,
+              reviewedAt: new Date(),
+            },
+          });
+          await recordAdminAction(
+            tx,
             reviewedBy,
-            reviewedAt: new Date(),
-          },
+            'ngo_application.rejected',
+            updated.id,
+            'Rejected NGO application',
+          );
+          return updated;
         });
         await notify({
           type: 'application_reviewed',

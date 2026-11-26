@@ -10,6 +10,7 @@ import {
   DEFAULT_SOROBAN_RPC_URL,
   parseConfig,
   DEFAULT_SHUTDOWN_TIMEOUT_MS,
+  DEFAULT_STREAM_RUNNING_LOW_DAYS,
   parseMaintenanceMode,
   parsePort,
   parseRateLimitMax,
@@ -145,6 +146,7 @@ describe('parseConfig', () => {
     expect(cfg.RATE_LIMIT_MAX).toBe(DEFAULT_RATE_LIMIT_MAX);
     expect(cfg.RATE_LIMIT_WINDOW).toBe(DEFAULT_RATE_LIMIT_WINDOW);
     expect(cfg.SOROBAN_RPC_URL).toEqual([DEFAULT_SOROBAN_RPC_URL]);
+    expect(cfg.STREAM_RUNNING_LOW_DAYS).toBe(DEFAULT_STREAM_RUNNING_LOW_DAYS);
   });
 
   it('reports every invalid variable at once in a ConfigError', () => {
@@ -198,6 +200,15 @@ describe('parseConfig numeric settings', () => {
       );
     },
   );
+
+  it('accepts a positive stream running-low threshold and rejects invalid values', () => {
+    expect(parseConfig({ STREAM_RUNNING_LOW_DAYS: '14' }).STREAM_RUNNING_LOW_DAYS).toBe(14);
+    for (const value of ['invalid', '0', '-1', '1.5']) {
+      expect(() => parseConfig({ STREAM_RUNNING_LOW_DAYS: value })).toThrow(
+        `STREAM_RUNNING_LOW_DAYS must be a positive integer, received "${value}"`,
+      );
+    }
+  });
 });
 
 describe('parseShutdownTimeoutMs', () => {
