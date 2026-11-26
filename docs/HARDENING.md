@@ -23,7 +23,7 @@ the hosting provider's secret manager; do not commit them or print them in logs.
 ## Metrics access
 
 - [ ] Set a strong, unique `METRICS_TOKEN` and keep it in the deployment's
-  secret store.
+      secret store.
 
   **Why it matters:** Without a token, `GET /metrics` is public and exposes
   operational and traffic details useful to anyone monitoring the service.
@@ -36,8 +36,8 @@ the hosting provider's secret manager; do not commit them or print them in logs.
 ## CORS origins
 
 - [ ] Set `CORS_ORIGINS` to the exact HTTPS origins of the production browser
-  clients, comma-separated when there is more than one. Remove development and
-  preview origins that are no longer needed.
+      clients, comma-separated when there is more than one. Remove development and
+      preview origins that are no longer needed.
 
   **Why it matters:** An allowed browser origin can make requests from an
   administrator's browser. CORS is not authentication, and a broad origin list
@@ -56,8 +56,8 @@ the hosting provider's secret manager; do not commit them or print them in logs.
 ## Admin addresses and signing keys
 
 - [ ] Configure only intended admin public keys in `ADMIN_ADDRESS` and/or
-  `ADMIN_ADDRESSES`. Keep the corresponding secret keys outside the backend and
-  protect them in the operators' wallet or key-management system.
+      `ADMIN_ADDRESSES`. Keep the corresponding secret keys outside the backend and
+      protect them in the operators' wallet or key-management system.
 
   **Why it matters:** Any listed key can authorize admin API requests. An
   omitted allow-list leaves admin routes unavailable; an overly broad or
@@ -72,10 +72,10 @@ the hosting provider's secret manager; do not commit them or print them in logs.
 ## Rate limits
 
 - [ ] Review `RATE_LIMIT_MAX` and `RATE_LIMIT_WINDOW` for the expected API
-  traffic, and `RATE_LIMIT_APPLICATION_MAX` and
-  `RATE_LIMIT_APPLICATION_WINDOW` for public NGO application submissions.
-  Keep the values positive and low enough to limit abuse without blocking
-  normal clients.
+      traffic, and `RATE_LIMIT_APPLICATION_MAX` and
+      `RATE_LIMIT_APPLICATION_WINDOW` for public NGO application submissions.
+      Keep the values positive and low enough to limit abuse without blocking
+      normal clients.
 
   **Why it matters:** Limits reduce the impact of abusive request bursts. The
   configured global limit is per client IP; signed admin routes have a budget
@@ -93,7 +93,7 @@ the hosting provider's secret manager; do not commit them or print them in logs.
 ## Production mode and transport
 
 - [ ] Set `NODE_ENV=production` and serve the API only over HTTPS, using the
-  platform's TLS termination and secure configuration storage for credentials.
+      platform's TLS termination and secure configuration storage for credentials.
 
   **Why it matters:** Production mode disables interactive Swagger
   documentation, and HTTPS protects request headers and bodies in transit.

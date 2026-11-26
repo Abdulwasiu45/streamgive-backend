@@ -6,6 +6,9 @@ backend. Except for health checks and metrics, API routes are mounted under
 addresses, timestamps, and signatures. JSON response fields shown are
 representative; timestamps are ISO 8601 strings.
 
+For copy-ready `curl` commands and sample responses for every public
+endpoint, see [API examples](API-EXAMPLES.md).
+
 ## Pagination
 
 All cursor endpoints accept an integer `limit` between 1 and 100, defaulting to 100. Omit `cursor` for the first page. Pass the previous response's `nextCursor` unchanged and keep the same filters and ordering. The cursor is the UUID of the last returned row and is exclusive. Stop on `nextCursor: null`, even when a page contains exactly `limit` rows.
@@ -49,6 +52,169 @@ signature; `401 stale_signature` for a malformed or out-of-window timestamp;
 `401 replayed_signature` when the same address, method, URL, and timestamp
 are reused. They return `503 admin_auth_not_configured` when both admin
 address settings are empty. See the HTTP error contract below for examples.
+
+### Owner signature
+
+Routes marked **Owner signature** let the holder of an NGO or applicant
+wallet act on their own record without an admin. Any valid Stellar account
+can sign; the route then checks that the signing address owns the resource.
+Two routes use it today:
+
+| Route                                     | Owner check                                                                                         |
+| ----------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `PATCH /v1/ngos/{id}/profile`             | The address must equal the NGO's `ownerAddress`, and the NGO must be verified.                      |
+| `POST /v1/ngo-applications/{id}/withdraw` | The address must equal the application's `ownerAddress`, and the application must still be pending. |
+
+#### Headers
+
+All three headers are required:
+
+| Header              | Value                                                                                         |
+| ------------------- | --------------------------------------------------------------------------------------------- |
+| `x-owner-address`   | The signer's Stellar public key (`G...`).                                                     |
+| `x-owner-timestamp` | The current Unix time in **milliseconds** (`Date.now()`), as an integer string.               |
+| `x-owner-signature` | The 64-byte Ed25519 signature, encoded as base64 or hexadecimal. Both encodings are accepted. |
+
+#### Signed payload
+
+The client builds this string and signs it:
+
+```text
+METHOD:URL:TIMESTAMP:BODY_HASH
+```
+
+- `METHOD` is the HTTP method in upper case, for example `PATCH`.
+- `URL` is the request path exactly as sent, including the `/v1` prefix and
+  any query string, for example `/v1/ngos/<UUID>/profile`. Do not include the
+  scheme or host.
+- `TIMESTAMP` is the exact `x-owner-timestamp` header value.
+- `BODY_HASH` is the lowercase hex SHA-256 of the raw request body bytes. For
+  a request with no body, it is the SHA-256 of zero bytes:
+  `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`. Hash the
+  exact bytes you send; re-serialising the JSON with different spacing or key
+  order changes the hash.
+
+The signature is computed over the SEP-53 message hash, as for admin
+requests: SHA-256 of the UTF-8 bytes of `Stellar Signed Message:\n` followed
+by the payload. A wallet's generic message-signing call (SEP-53) does this
+step for you; when signing with a raw keypair, hash first and sign the
+32-byte digest.
+
+#### Timestamp and replay rules
+
+- The timestamp must be in milliseconds. A positive value below
+  `100000000000` is treated as seconds and rejected with
+  `401 timestamp_in_seconds`.
+- The timestamp must be within five minutes of the server's clock, in either
+  direction. Otherwise the request is rejected with `401 stale_timestamp`.
+- After a signature verifies, the server records the combination of address,
+  timestamp and signature for five minutes. Sending the same combination
+  again in that window returns `401 replayed_signature`. Ed25519 signatures
+  are deterministic, so resending an identical request is a replay: sign each
+  request with a fresh timestamp.
+- The replay record is held in the memory of the process that handled the
+  request. It is not shared between instances and is cleared on restart, so
+  the five-minute timestamp window is the hard limit on replay. See
+  [ADR-0003](adr/0003-keep-admin-signature-replay-state-in-memory.md).
+
+#### Errors
+
+| Status | Body                                | Cause                                                                       |
+| ------ | ----------------------------------- | --------------------------------------------------------------------------- |
+| 401    | `{"error":"unauthorized"}`          | A header is missing or empty.                                               |
+| 401    | `{"error":"invalid_owner_address"}` | `x-owner-address` is not a valid Stellar public key.                        |
+| 401    | `{"error":"invalid_timestamp"}`     | `x-owner-timestamp` is not an integer.                                      |
+| 401    | `{"error":"timestamp_in_seconds"}`  | The timestamp looks like Unix seconds.                                      |
+| 401    | `{"error":"stale_timestamp"}`       | The timestamp is more than five minutes from the server's clock.            |
+| 401    | `{"error":"invalid_signature"}`     | The signature does not verify for this address, method, URL, time and body. |
+| 401    | `{"error":"replayed_signature"}`    | This address, timestamp and signature were already used.                    |
+| 403    | `{"error":"forbidden"}`             | The signature is valid, but the address does not own the resource.          |
+
+Route-specific errors, such as `403 ngo_not_verified` or `409 not_pending`,
+are returned after the signature passes.
+
+#### Worked example
+
+This example uses a throwaway test key; never use it for real funds.
+
+```text
+Secret key:      SAAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQC5MY
+x-owner-address: GCFIRY65OQE7DFP5KLNS2PF2LVZMUZYJX4OZIEQ36N2IQANUB5XVYOJR
+```
+
+The owner updates the profile of NGO `6f1c2d3e-4b5a-4c7d-8e9f-0a1b2c3d4e5f`
+at `1764064800000` (2025-11-25T10:00:00Z) with this exact body:
+
+```json
+{ "description": "Clean water for rural schools.", "website": "example.org" }
+```
+
+1. Body hash (SHA-256 of the body bytes, hex):
+
+   ```text
+   5c2f386f4b2f4950786b859e62a7463ad0f05e5565c7a7b10b99f7b0cf259f9f
+   ```
+
+2. Payload:
+
+   ```text
+   PATCH:/v1/ngos/6f1c2d3e-4b5a-4c7d-8e9f-0a1b2c3d4e5f/profile:1764064800000:5c2f386f4b2f4950786b859e62a7463ad0f05e5565c7a7b10b99f7b0cf259f9f
+   ```
+
+3. SEP-53 hash, SHA-256 of `"Stellar Signed Message:\n" + payload` (hex):
+
+   ```text
+   b1d2dc62526a55e84b6b615944fe92a9d7396cb913afbd9be141042a353d3c45
+   ```
+
+4. Ed25519 signature of that hash (base64):
+
+   ```text
+   9BAueykViWm29XCtw86PFHKZmzb3+ZE7J4Xlgbjx+utlbPeL/2b8wx58t1p2lkndp/svnyAxNMxbUUWDaQYQAQ==
+   ```
+
+5. Request:
+
+   ```bash
+   curl --request PATCH \
+     --url 'http://localhost:3000/v1/ngos/6f1c2d3e-4b5a-4c7d-8e9f-0a1b2c3d4e5f/profile' \
+     --header 'content-type: application/json' \
+     --header 'x-owner-address: GCFIRY65OQE7DFP5KLNS2PF2LVZMUZYJX4OZIEQ36N2IQANUB5XVYOJR' \
+     --header 'x-owner-timestamp: 1764064800000' \
+     --header 'x-owner-signature: 9BAueykViWm29XCtw86PFHKZmzb3+ZE7J4Xlgbjx+utlbPeL/2b8wx58t1p2lkndp/svnyAxNMxbUUWDaQYQAQ==' \
+     --data-raw '{"description":"Clean water for rural schools.","website":"example.org"}'
+   ```
+
+The fixed timestamp lets you check your own signing code against these
+values. Sent to a live server, this exact request returns
+`401 stale_timestamp`, because the timestamp is in the past. Use the current
+time when signing real requests.
+
+The same steps in TypeScript:
+
+```ts
+import { Keypair } from '@stellar/stellar-sdk';
+import { createHash } from 'node:crypto';
+
+function signOwnerRequest(secret: string, method: string, url: string, body = '') {
+  const keypair = Keypair.fromSecret(secret);
+  const timestamp = Date.now().toString();
+  const bodyHash = createHash('sha256').update(body, 'utf8').digest('hex');
+  const payload = `${method.toUpperCase()}:${url}:${timestamp}:${bodyHash}`;
+  const messageHash = createHash('sha256')
+    .update('Stellar Signed Message:\n', 'utf8')
+    .update(payload, 'utf8')
+    .digest();
+  return {
+    'x-owner-address': keypair.publicKey(),
+    'x-owner-timestamp': timestamp,
+    'x-owner-signature': Buffer.from(keypair.sign(messageHash)).toString('base64'),
+  };
+}
+```
+
+For `POST /v1/ngo-applications/{id}/withdraw`, send no body and no
+`content-type` header, and sign with the empty-body hash shown above.
 
 Routes marked **Public** do not require authentication. Public directory,
 stream, and impact endpoints may return `304 Not Modified` when the
@@ -491,17 +657,17 @@ Returns `400 {"error":"invalid_request"}` for an invalid address and
 **Auth:** Public  
 **Query params:**
 
-| Name            | Type                     | Default | Description                                    |
-| --------------- | ------------------------ | ------- | ---------------------------------------------- |
-| `donor`         | Stellar public key       | —       | Filter by donor address.                       |
+| Name            | Type                     | Default | Description                                     |
+| --------------- | ------------------------ | ------- | ----------------------------------------------- |
+| `donor`         | Stellar public key       | —       | Filter by donor address.                        |
 | `ngo`           | UUID                     | —       | Filter by NGO ID.                               |
-| `ngoAddress`    | Stellar public key       | —       | Filter by NGO owner address.                   |
-| `token`         | Stellar contract address | —       | Filter by token contract.                      |
-| `status`        | `ACTIVE`, `PAUSED` or `CANCELLED` | —       | Filter by stream status.                       |
-| `createdAfter`  | ISO-8601 date-time       | —       | Include streams created at or after this time. |
-| `createdBefore` | ISO-8601 date-time       | —       | Include streams created at or before this time.|
-| `limit`         | integer, 1–100           | `100`   | Maximum results.                               |
-| `cursor`        | UUID                     | —       | Continue after this stream ID.                |
+| `ngoAddress`    | Stellar public key       | —       | Filter by NGO owner address.                    |
+| `token`         | Stellar contract address | —       | Filter by token contract.                       |
+| `status`        | `ACTIVE`, `PAUSED` or `CANCELLED` | —       | Filter by stream status.                        |
+| `createdAfter`  | ISO-8601 date-time       | —       | Include streams created at or after this time.  |
+| `createdBefore` | ISO-8601 date-time       | —       | Include streams created at or before this time. |
+| `limit`         | integer, 1–100           | `100`   | Maximum results.                                |
+| `cursor`        | UUID                     | —       | Continue after this stream ID.                  |
 
 Returns streams newest first. On-chain integer values are serialized as
 decimal strings.
