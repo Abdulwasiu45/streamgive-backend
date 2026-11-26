@@ -1,9 +1,12 @@
+import { Readable } from 'node:stream';
+
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 
 import { Prisma } from '../generated/prisma/client.js';
 import { prisma } from '../db.js';
 import { sendPublicCacheable } from './cacheable.js';
+import { escapeCsvField } from './donors.js';
 import { requireAdminSignature } from '../middleware/adminAuth.js';
 import { requireOwnerSignature } from '../middleware/ownerAuth.js';
 import { getPublicNgoName } from './ngoName.js';
@@ -12,6 +15,26 @@ import { committedTotalsByToken } from './tokenTotals.js';
 /** Params for NGO detail, donor, and admin update routes; `id` must be an NGO UUID. */
 const idParamSchema = z.object({ id: z.string().uuid() });
 const RECENT_STREAMS_LIMIT = 10;
+const WITHDRAWALS_CSV_BATCH_SIZE = 500;
+const WITHDRAWALS_CSV_HEADERS = [
+  'eventId',
+  'streamId',
+  'tokenAddress',
+  'amount',
+  'ledger',
+  'txHash',
+  'withdrawnAt',
+];
+
+interface WithdrawalRow {
+  id: string;
+  streamId: bigint;
+  tokenAddress: string;
+  amount: string | null;
+  ledger: number;
+  txHash: string;
+  createdAt: Date;
+}
 
 interface NgoListRow {
   id: string;
@@ -507,4 +530,90 @@ export async function ngoRoutes(app: FastifyInstance): Promise<void> {
 
     return { ...updated, name: getPublicNgoName(updated) || null };
   });
+
+  /**
+   * Exports an NGO's withdrawals as a formula-safe CSV, streamed in batches.
+   * @route GET /v1/ngos/:id/withdrawals.csv
+   * @param id NGO UUID
+   * @auth Owner signature required via `x-owner-address`, `x-owner-timestamp`, and `x-owner-signature`.
+   * @returns 200 CSV stream; 400 invalid id; 401 unauthorized; 403 `{ error: "forbidden" }` when the signer is not the owner; 404 `{ error: "not_found" }`.
+   */
+  app.get(
+    '/ngos/:id/withdrawals.csv',
+    { preHandler: requireOwnerSignature },
+    async (request, reply) => {
+      const ownerAddress = request.headers['x-owner-address'];
+      if (typeof ownerAddress !== 'string') {
+        return reply.code(401).send({ error: 'unauthorized' });
+      }
+
+      const parsedParams = idParamSchema.safeParse(request.params);
+      if (!parsedParams.success) {
+        return reply.code(400).send({ error: 'invalid_request' });
+      }
+
+      const ngo = await prisma.ngo.findUnique({ where: { id: parsedParams.data.id } });
+      if (!ngo) {
+        return reply.code(404).send({ error: 'not_found' });
+      }
+      if (ngo.ownerAddress !== ownerAddress) {
+        return reply.code(403).send({ error: 'forbidden' });
+      }
+
+      reply.header('content-type', 'text/csv; charset=utf-8');
+      reply.header(
+        'content-disposition',
+        `attachment; filename="ngo-${ngo.id}-withdrawals.csv"`,
+      );
+
+      const csv = Readable.from(
+        (async function* () {
+          yield `${WITHDRAWALS_CSV_HEADERS.map(escapeCsvField).join(',')}\r\n`;
+          let cursor: { ledger: number; id: string } | undefined;
+
+          while (true) {
+            const rows: WithdrawalRow[] = await prisma.$queryRaw<WithdrawalRow[]>(Prisma.sql`
+              SELECT e.id,
+                     e.stream_id AS "streamId",
+                     s.token_address AS "tokenAddress",
+                     e.payload->>'accrued' AS "amount",
+                     e.ledger,
+                     e.tx_hash AS "txHash",
+                     e.created_at AS "createdAt"
+              FROM "stream_events" e
+              JOIN "streams" s ON s.on_chain_id = e.stream_id
+              WHERE s.ngo_id = ${ngo.id}
+                AND e.type = 'withdraw'
+                ${
+                  cursor
+                    ? Prisma.sql`AND (e.ledger, e.id) > (${cursor.ledger}::int, ${cursor.id}::text)`
+                    : Prisma.empty
+                }
+              ORDER BY e.ledger ASC, e.id ASC
+              LIMIT ${WITHDRAWALS_CSV_BATCH_SIZE}
+            `);
+
+            for (const row of rows) {
+              const fields = [
+                row.id,
+                row.streamId.toString(),
+                row.tokenAddress,
+                row.amount ?? '',
+                row.ledger,
+                row.txHash,
+                row.createdAt.toISOString(),
+              ];
+              yield `${fields.map(escapeCsvField).join(',')}\r\n`;
+            }
+
+            const last = rows.at(-1);
+            if (!last || rows.length < WITHDRAWALS_CSV_BATCH_SIZE) break;
+            cursor = { ledger: last.ledger, id: last.id };
+          }
+        })(),
+      );
+
+      return reply.send(csv);
+    },
+  );
 }
