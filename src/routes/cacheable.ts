@@ -4,7 +4,7 @@ import type { FastifyReply, FastifyRequest } from 'fastify';
 const PUBLIC_MAX_AGE_SECONDS = 30;
 
 function matchesIfNoneMatch(header: string | string[] | undefined, etag: string): boolean {
-  const candidates = Array.isArray(header) ? header : header?.split(',') ?? [];
+  const candidates = Array.isArray(header) ? header : (header?.split(',') ?? []);
   return candidates.some((candidate) => {
     const normalized = candidate.trim().replace(/^W\//, '');
     return normalized === '*' || normalized === etag;
@@ -32,6 +32,15 @@ export function sendPublicCacheable<T>(
     .header('ETag', etag);
 
   if (matchesIfNoneMatch(request.headers['if-none-match'], etag)) {
+    // A 304 must carry the same Vary as the 200 it stands in for (RFC 9110
+    // §15.4.5). The compression plugin only adds `Accept-Encoding` when it
+    // encodes a body, and a 304 has none, so add it here; otherwise a shared
+    // cache could pair a gzip body with a client that cannot decode it.
+    const vary = reply.getHeader('vary');
+    const existing = Array.isArray(vary) ? vary.join(', ') : vary ? String(vary) : '';
+    if (!/(^|,)\s*accept-encoding\s*(,|$)/i.test(existing)) {
+      reply.header('Vary', existing ? `${existing}, Accept-Encoding` : 'Accept-Encoding');
+    }
     return reply.code(304).send();
   }
 

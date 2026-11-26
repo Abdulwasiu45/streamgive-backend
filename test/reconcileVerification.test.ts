@@ -64,9 +64,9 @@ beforeEach(() => {
 
 describe('reconcileVerification', () => {
   it('reports a mismatch without fixing', async () => {
-    (prisma.ngo.findMany as unknown as { mockResolvedValue: (v: unknown) => void }).mockResolvedValue([
-      { id: 'ngo-1', ownerAddress: 'GAOADRESS', verified: false },
-    ]);
+    (
+      prisma.ngo.findMany as unknown as { mockResolvedValue: (v: unknown) => void }
+    ).mockResolvedValue([{ id: 'ngo-1', ownerAddress: 'GAOADRESS', verified: false }]);
     simulateTransaction.mockResolvedValue({
       result: { retval: { type: 'scvInvoke' } },
     });
@@ -88,14 +88,16 @@ describe('reconcileVerification', () => {
   });
 
   it('fixes mismatches when fix is true', async () => {
-    (prisma.ngo.findMany as unknown as { mockResolvedValue: (v: unknown) => void }).mockResolvedValue([
-      { id: 'ngo-2', ownerAddress: 'GAOADRESS2', verified: true },
-    ]);
+    (
+      prisma.ngo.findMany as unknown as { mockResolvedValue: (v: unknown) => void }
+    ).mockResolvedValue([{ id: 'ngo-2', ownerAddress: 'GAOADRESS2', verified: true }]);
     simulateTransaction.mockResolvedValue({
       result: { retval: { type: 'scvInvoke' } },
     });
     scValToNative.mockReturnValue(false);
-    (prisma.ngo.update as unknown as { mockResolvedValue: (v: unknown) => void }).mockResolvedValue({});
+    (prisma.ngo.update as unknown as { mockResolvedValue: (v: unknown) => void }).mockResolvedValue(
+      {},
+    );
 
     const report = await reconcileVerification({ fix: true });
 
@@ -107,7 +109,9 @@ describe('reconcileVerification', () => {
   });
 
   it('limits concurrent RPC calls', async () => {
-    (prisma.ngo.findMany as unknown as { mockResolvedValue: (v: unknown) => void }).mockResolvedValue(
+    (
+      prisma.ngo.findMany as unknown as { mockResolvedValue: (v: unknown) => void }
+    ).mockResolvedValue(
       Array.from({ length: 8 }, (_, index) => ({
         id: `ngo-${index}`,
         ownerAddress: `G${index}`,
@@ -131,9 +135,9 @@ describe('reconcileVerification', () => {
   });
 
   it('skips ngos that are not registered on-chain', async () => {
-    (prisma.ngo.findMany as unknown as { mockResolvedValue: (v: unknown) => void }).mockResolvedValue([
-      { id: 'ngo-3', ownerAddress: 'GAOADDRESS3', verified: false },
-    ]);
+    (
+      prisma.ngo.findMany as unknown as { mockResolvedValue: (v: unknown) => void }
+    ).mockResolvedValue([{ id: 'ngo-3', ownerAddress: 'GAOADDRESS3', verified: false }]);
     simulateTransaction.mockResolvedValue({ error: 'NotRegistered' });
 
     const report = await reconcileVerification();

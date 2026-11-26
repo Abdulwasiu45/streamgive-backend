@@ -12,6 +12,7 @@ import { buildServer } from './server.js';
 
 function fail(message: string): never {
   // Print every configuration problem at once rather than a stack trace from listen().
+  process.stderr.write(`${message}\n`);
   logger.error({ message }, 'Configuration Error');
   process.exit(1);
 }
@@ -70,10 +71,7 @@ export async function shutdown(signal: string): Promise<void> {
       cleanup(),
       new Promise<never>((_, reject) => {
         timeout = setTimeout(() => {
-          app.log.error(
-            { signal, timeoutMs: shutdownTimeoutMs, running },
-            'shutdown timed out',
-          );
+          app.log.error({ signal, timeoutMs: shutdownTimeoutMs, running }, 'shutdown timed out');
           reject(new Error(`shutdown timed out while waiting for ${running}`));
         }, shutdownTimeoutMs);
       }),

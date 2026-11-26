@@ -60,7 +60,10 @@ export async function isSafeWebhookUrl(value: string): Promise<boolean> {
     return false;
   }
 
-  const hostname = url.hostname.replace(/^\[|\]$/g, '').toLowerCase().replace(/\.$/, '');
+  const hostname = url.hostname
+    .replace(/^\[|\]$/g, '')
+    .toLowerCase()
+    .replace(/\.$/, '');
   if (
     hostname === 'localhost' ||
     hostname.endsWith('.localhost') ||

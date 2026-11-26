@@ -394,9 +394,7 @@ describe('GET /ngos/all (admin)', () => {
 
     expect(firstPage.statusCode).toBe(200);
     const firstBody = firstPage.json();
-    expect(firstBody.ngos.map((ngo: { name: string }) => ngo.name)).toEqual([
-      'Newer Verified NGO',
-    ]);
+    expect(firstBody.ngos.map((ngo: { name: string }) => ngo.name)).toEqual(['Newer Verified NGO']);
     expect(firstBody.nextCursor).not.toBeNull();
 
     const secondUrl = `/v1/ngos/all?verified=true&limit=1&cursor=${firstBody.nextCursor}`;
@@ -519,7 +517,10 @@ describe('GET /ngos/lookup', () => {
   it('400s on a malformed address instead of matching nothing silently', async () => {
     const app = buildServer();
 
-    const response = await app.inject({ method: 'GET', url: '/v1/ngos/lookup?address=not-an-address' });
+    const response = await app.inject({
+      method: 'GET',
+      url: '/v1/ngos/lookup?address=not-an-address',
+    });
     expect(response.statusCode).toBe(400);
 
     await app.close();
@@ -791,9 +792,7 @@ describe('GET /v1/ngos/:id/donors', () => {
       data: { ownerAddress: fakeAddress('I'), name: 'Other Fund', verified: true },
     });
     const donors = await Promise.all(
-      ['J', 'K', 'L'].map((char) =>
-        prisma.donor.create({ data: { address: fakeAddress(char) } }),
-      ),
+      ['J', 'K', 'L'].map((char) => prisma.donor.create({ data: { address: fakeAddress(char) } })),
     );
 
     await prisma.stream.createMany({
@@ -1056,7 +1055,6 @@ describe('GET /v1/ngos/:id/donors', () => {
     await app.close();
   });
 });
-
 
 describe('PATCH /admin/ngos/:id', () => {
   beforeAll(() => {

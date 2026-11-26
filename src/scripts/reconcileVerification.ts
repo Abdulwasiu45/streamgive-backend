@@ -40,14 +40,10 @@ export async function readOnChainVerified(ownerAddress: string): Promise<boolean
   const operation = contract.call('verified', nativeToScVal(ownerAddress, { type: 'address' }));
   const source = new Account(Keypair.random().publicKey(), '0');
 
-  const transaction = new TransactionBuilder(
-    source,
-    {
-      fee: '100',
-      networkPassphrase:
-        process.env.STELLAR_NETWORK_PASSPHRASE ?? Networks.TESTNET,
-    },
-  )
+  const transaction = new TransactionBuilder(source, {
+    fee: '100',
+    networkPassphrase: process.env.STELLAR_NETWORK_PASSPHRASE ?? Networks.TESTNET,
+  })
     .addOperation(operation)
     .setTimeout(0)
     .build();
@@ -77,7 +73,9 @@ export async function readOnChainVerified(ownerAddress: string): Promise<boolean
  * Read every NGO's on-chain verified status and compare it to the DB.
  * When `fix` is true, mismatches are written back to the NGO table.
  */
-export async function reconcileVerification(options: { fix?: boolean } = {}): Promise<ReconciliationReport> {
+export async function reconcileVerification(
+  options: { fix?: boolean } = {},
+): Promise<ReconciliationReport> {
   const { fix = false } = options;
   const ngos = await prisma.ngo.findMany();
 

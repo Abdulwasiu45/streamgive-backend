@@ -137,25 +137,28 @@ whole allowance. That budget covers **one** free service, not several.
 
 Several pieces of state live in process memory. Each one behaves differently
 when a second replica runs, and when the process restarts. The table lists
-what the code does today.
+what the code does today. For the full guide, including what is shared
+through the database, the risks and the recommended settings, see
+[docs/SCALING.md](docs/SCALING.md).
 
-| State | Where | Second replica | Restart |
-|---|---|---|---|
-| Admin signature replay set | `usedSignatures` in `src/middleware/adminAuth.ts` | A signature already used on one replica is accepted again on the other within the replay window. | Cleared, so a signature used before the restart is accepted again within its window. |
-| Rate limits (global and NGO applications) | `@fastify/rate-limit` with its default in-memory store. No shared store is configured in `src/server.ts`. | Each replica counts requests separately, so the effective limit is about `RATE_LIMIT_MAX` times the number of replicas. | Counters reset. |
-| Notification de-duplication | `deliveredEventIds` in `src/notifications/service.ts` (capped at 10,000 ids) | The database check against `notificationLog` runs before each send, but two replicas handling the same event at the same moment can both send before either writes the log entry. | The in-memory set is cleared. The database check still prevents resends of events logged as delivered. |
-| Metrics counters | `src/metrics.ts` | `/metrics` reports one replica's counters. Scrape each replica separately. | Counters reset. |
-| Indexer | Started in every process by `src/index.ts`. The checkpoint is in the `indexer_checkpoints` table. | No leader lock exists in `src/indexer`, so each replica polls the same events. Whether that double processing is harmless depends on the handlers being idempotent. This was not verified. | Resumes from the saved checkpoint. |
-| Log retention | Daily `setInterval` in `src/maintenance/logRetention.ts`, in every process | Each replica runs the job. | Runs again on the next interval. |
+| State                                     | Where                                                                                                                                                                                                | Second replica                                                                                                                                                                    | Restart                                                                                                |
+| ----------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| Admin signature replay set                | `usedSignatures` in `src/middleware/adminAuth.ts`                                                                                                                                                    | A signature already used on one replica is accepted again on the other within the replay window.                                                                                  | Cleared, so a signature used before the restart is accepted again within its window.                   |
+| Rate limits (global and NGO applications) | `@fastify/rate-limit` with its default in-memory store. No shared store is configured in `src/server.ts`.                                                                                            | Each replica counts requests separately, so the effective limit is about `RATE_LIMIT_MAX` times the number of replicas.                                                           | Counters reset.                                                                                        |
+| Notification de-duplication               | `deliveredEventIds` in `src/notifications/service.ts` (capped at 10,000 ids)                                                                                                                         | The database check against `notificationLog` runs before each send, but two replicas handling the same event at the same moment can both send before either writes the log entry. | The in-memory set is cleared. The database check still prevents resends of events logged as delivered. |
+| Metrics counters                          | `src/metrics.ts`                                                                                                                                                                                     | `/metrics` reports one replica's counters. Scrape each replica separately.                                                                                                        | Counters reset.                                                                                        |
+| Indexer                                   | Started in every process by `src/index.ts`. The checkpoint is in the `indexer_checkpoints` table, and a PostgreSQL advisory lock in `src/indexer/lock.ts` allows only one process to poll at a time. | Replicas that do not hold the lock wait and retry; they do not process the same events concurrently.                                                                              | Resumes from the saved checkpoint.                                                                     |
+| Log retention                             | Daily `setInterval` in `src/maintenance/logRetention.ts`, in every process                                                                                                                           | Each replica runs the job.                                                                                                                                                        | Runs again on the next interval.                                                                       |
 
 The one coordinated path is NGO application creation, which takes a Postgres
 advisory lock keyed on the owner address (`src/routes/ngoApplications.ts`).
 That check holds across replicas.
 
-**Recommended instance count: one.** Until the replay set, rate limits, and
-indexer are moved to shared storage or given a leader lock, run a single
-backend instance. Scale out only after those items are resolved, and keep the
-indexer on one instance even then.
+**Recommended instance count: one.** The indexer advisory lock coordinates its
+worker across replicas, but admin signature replay protection and rate limits
+remain process-local, notification delivery can race, and log retention runs
+in every process. Account for those behaviours before scaling out; only one
+indexer worker will be active at a time.
 
 ## Notes on Supabase
 
@@ -163,7 +166,6 @@ indexer on one instance even then.
   keeps this service querying the database, which keeps the project active.
 - Percent-encode the password in the connection URL. A literal `#`
   truncates it, and a literal `@` breaks host parsing.
-
 
 ## Deploying pre-built images from GHCR
 

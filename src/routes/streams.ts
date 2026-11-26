@@ -9,7 +9,8 @@ import { getPublicNgoName } from './ngoName.js';
 /**
  * Query for GET /v1/streams: optional Stellar `donor` and `ngoAddress`,
  * NGO UUID `ngo`, contract-address `token`, `ACTIVE`/`CANCELLED` status,
- * `limit` from 1–100 (default 100), and an optional stream UUID `cursor`.
+ * inclusive `createdAt` bounds, `limit` from 1–100 (default 100), and an
+ * optional stream UUID `cursor`.
  */
 const querySchema = z.object({
   // Stellar StrKey ed25519 public key: 'G' + 55 base32 (A-Z2-7) chars.
@@ -30,6 +31,14 @@ const querySchema = z.object({
     })
     .optional(),
   status: z.enum(['ACTIVE', 'CANCELLED']).optional(),
+  createdAfter: z.iso
+    .datetime({ offset: true })
+    .transform((value) => new Date(value))
+    .optional(),
+  createdBefore: z.iso
+    .datetime({ offset: true })
+    .transform((value) => new Date(value))
+    .optional(),
   limit: z.coerce.number().int().min(1).max(100).default(100),
   // A stream id from a previous page's last item; results start right after it.
   cursor: z.string().uuid().optional(),
@@ -96,9 +105,9 @@ function serializeStreamEvent<T extends { streamId: bigint | null }>(event: T) {
 
 export async function streamRoutes(app: FastifyInstance): Promise<void> {
   /**
-   * Lists streams newest first with optional donor, NGO, token, and status filters.
+   * Lists streams newest first with optional donor, NGO, token, status, and creation-date filters.
    * @route GET /v1/streams
-   * @query donor, ngo, ngoAddress, token, status, limit, cursor
+   * @query donor, ngo, ngoAddress, token, status, createdAfter, createdBefore, limit, cursor
    * @auth Public
    * @returns 200 `{ streams: Stream[], hasMore: boolean, nextCursor: string | null }`; 400 `{ error: "invalid_request", details }` for any invalid query parameter.
    */
@@ -113,7 +122,8 @@ export async function streamRoutes(app: FastifyInstance): Promise<void> {
       schema: {
         tags: ['Streams'],
         summary: 'List donation streams',
-        description: 'Returns streams newest first, with optional filters and cursor pagination.',
+        description:
+          'Returns streams newest first, with optional filters and cursor pagination, including creation-date bounds.',
         querystring: querystringDocs,
         response: {
           200: { type: 'object', additionalProperties: true },
@@ -133,7 +143,8 @@ export async function streamRoutes(app: FastifyInstance): Promise<void> {
       // their own); `ngo` filters by the NGO's internal id, matching what
       // GET /ngos and /ngos/:id expose; `ngoAddress` filters by the NGO's
       // Stellar wallet address for clients that only have the on-chain key.
-      const { donor, ngo, ngoAddress, token, status, limit, cursor } = parsedQuery.data;
+      const { donor, ngo, ngoAddress, token, status, createdAfter, createdBefore, limit, cursor } =
+        parsedQuery.data;
 
       const rows = await prisma.stream.findMany({
         where: {
@@ -142,6 +153,14 @@ export async function streamRoutes(app: FastifyInstance): Promise<void> {
           ...(ngoAddress ? { ngo: { ownerAddress: ngoAddress } } : {}),
           ...(token ? { tokenAddress: token } : {}),
           ...(status ? { status } : {}),
+          ...(createdAfter || createdBefore
+            ? {
+                createdAt: {
+                  ...(createdAfter ? { gte: createdAfter } : {}),
+                  ...(createdBefore ? { lte: createdBefore } : {}),
+                },
+              }
+            : {}),
         },
         orderBy: { createdAt: 'desc' },
         take: limit + 1,

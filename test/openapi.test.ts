@@ -7,11 +7,81 @@ import packageJson from '../package.json' with { type: 'json' };
 import { generateOpenApiDocument } from '../src/scripts/exportOpenApi.js';
 import { buildServer } from '../src/server.js';
 
+const OPENAPI_ROUTE_ALLOWLIST = new Set([
+  'GET /health',
+  'GET /health/ready',
+  'GET /metrics',
+  'GET /v1/health',
+  'OPTIONS *',
+  'OPTIONS /*',
+]);
+
+const OPENAPI_ROUTE_ALLOWLIST_PREFIXES = ['/docs'];
+
+function getRegisteredOperations(routeTree: string): Array<{ method: string; path: string }> {
+  const segments: string[] = [];
+  const operations: Array<{ method: string; path: string }> = [];
+
+  for (const line of routeTree.split('\n')) {
+    const node = /^((?: {4}|│ {3})*)(?:├──|└──)\s+(.*)$/.exec(line);
+    if (node === null) {
+      continue;
+    }
+
+    const depth = node[1].length / 4;
+    const route = /^(.*?) \(([^()]*)\)$/.exec(node[2]);
+    segments.length = depth;
+    segments[depth] = route?.[1] ?? node[2];
+
+    if (route === null) {
+      continue;
+    }
+
+    const path = `/${segments
+      .slice(0, depth + 1)
+      .map((segment) => segment.replace(/^\/+|\/+$/g, ''))
+      .filter(Boolean)
+      .join('/')}`.replace(/:([A-Za-z0-9_]+)/g, '{$1}');
+
+    for (const method of route[2].split(',').map((value) => value.trim())) {
+      operations.push({ method: method === 'HEAD' ? 'GET' : method, path });
+    }
+  }
+
+  return operations;
+}
+
 describe('OpenAPI documentation', () => {
   it('keeps committed openapi.json in sync with the generated OpenAPI specification', async () => {
     const doc = await generateOpenApiDocument();
     const committed = readFileSync(resolve(process.cwd(), 'openapi.json'), 'utf8');
-    expect(committed).toBe(`${JSON.stringify(doc, null, 2)}\n`);
+    expect(JSON.parse(committed)).toEqual(doc);
+  });
+
+  it('documents every registered route except explicitly allowlisted infrastructure routes', async () => {
+    const app = buildServer();
+    await app.ready();
+
+    try {
+      const paths = app.swagger().paths ?? {};
+      const missing = getRegisteredOperations(app.printRoutes({ commonPrefix: false }))
+        .filter(({ method, path }) => {
+          if (
+            OPENAPI_ROUTE_ALLOWLIST.has(`${method} ${path}`) ||
+            OPENAPI_ROUTE_ALLOWLIST_PREFIXES.some(
+              (prefix) => path === prefix || path.startsWith(`${prefix}/`),
+            )
+          ) {
+            return false;
+          }
+          return !(paths as Record<string, Record<string, unknown>>)[path]?.[method.toLowerCase()];
+        })
+        .map(({ method, path }) => `${method} ${path}`);
+
+      expect(missing, `Registered routes missing from OpenAPI: ${missing.join(', ')}`).toEqual([]);
+    } finally {
+      await app.close();
+    }
   });
 
   it('uses the package version and documents signed admin headers', async () => {
@@ -112,9 +182,7 @@ describe('OpenAPI documentation', () => {
     const app = buildServer();
     await app.ready();
 
-    expect(
-      app.swagger().paths?.['/v1/streams/on-chain/{onChainId}']?.get?.parameters,
-    ).toEqual(
+    expect(app.swagger().paths?.['/v1/streams/on-chain/{onChainId}']?.get?.parameters).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ name: 'onChainId', in: 'path', required: true }),
       ]),

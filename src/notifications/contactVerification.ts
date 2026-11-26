@@ -6,10 +6,32 @@ import { logger } from '../logger.js';
 const CONTACT_EMAIL_TOKEN_TTL_MS = 24 * 60 * 60 * 1000;
 const CONTACT_EMAIL_RESEND_COOLDOWN_MS = 5 * 60 * 1000;
 
+/** Default abort timeout for the email provider fetch, in milliseconds. */
+const DEFAULT_VERIFY_EMAIL_TIMEOUT_MS = 5_000;
+
+/**
+ * Returns the timeout to use for the email provider fetch request.
+ * Reads `VERIFY_EMAIL_TIMEOUT_MS` from the environment so the value can be
+ * adjusted per deployment without a code change. Defaults to 5 seconds.
+ */
+function getVerifyEmailTimeoutMs(): number {
+  const configured = Number(process.env.VERIFY_EMAIL_TIMEOUT_MS);
+  return Number.isSafeInteger(configured) && configured > 0
+    ? Math.min(configured, 2_147_483_647)
+    : DEFAULT_VERIFY_EMAIL_TIMEOUT_MS;
+}
+
 function hashToken(token: string): string {
   return createHash('sha256').update(token).digest('hex');
 }
 
+/**
+ * Sends a one-time contact-email verification link to the applicant.
+ *
+ * The Resend fetch call uses `AbortSignal.timeout(getVerifyEmailTimeoutMs())`
+ * so a provider that accepts the TCP connection and stalls never holds the
+ * applicant's submission indefinitely.
+ */
 export async function sendContactVerification(application: {
   id: string;
   name: string;
@@ -55,6 +77,7 @@ export async function sendContactVerification(application: {
 
   const token = randomBytes(32).toString('base64url');
   const expiresAt = new Date(Date.now() + CONTACT_EMAIL_TOKEN_TTL_MS);
+
   try {
     await prisma.ngoApplicationContactChallenge.upsert({
       where: { applicationId: application.id },
@@ -72,6 +95,7 @@ export async function sendContactVerification(application: {
 
   const verificationUrl = new URL('/v1/ngo-applications/verify-contact-email', baseUrl);
   verificationUrl.searchParams.set('token', token);
+
   try {
     const response = await fetch('https://api.resend.com/emails', {
       method: 'POST',
@@ -85,14 +109,17 @@ export async function sendContactVerification(application: {
         subject: 'Verify your StreamGive NGO contact email',
         html: `<p>Hello ${escapeHtml(application.name)},</p><p><a href="${verificationUrl.toString()}">Verify this contact email</a>. This link expires in 24 hours.</p>`,
       }),
+      // Abort if the provider accepts the connection but never responds — without
+      // this the fetch hangs until the platform's own socket timeout fires, which
+      // can hold the applicant's submission for minutes.
+      signal: AbortSignal.timeout(getVerifyEmailTimeoutMs()),
     });
+
     if (!response.ok) {
-      logger.error(
-        { status: response.status },
-        'contact verification email was rejected',
-      );
+      logger.error({ status: response.status }, 'contact verification email was rejected');
       return false;
     }
+
     return true;
   } catch (error) {
     logger.error({ err: error }, 'failed to send contact verification email');
@@ -102,10 +129,12 @@ export async function sendContactVerification(application: {
 
 export async function verifyContactToken(token: string): Promise<boolean> {
   const tokenHash = hashToken(token);
+
   return prisma.$transaction(async (tx) => {
     const challenge = await tx.ngoApplicationContactChallenge.findUnique({
       where: { tokenHash },
     });
+
     if (!challenge || challenge.expiresAt.getTime() <= Date.now()) {
       if (challenge) {
         await tx.ngoApplicationContactChallenge.deleteMany({ where: { tokenHash } });
@@ -120,6 +149,7 @@ export async function verifyContactToken(token: string): Promise<boolean> {
       where: { id: challenge.applicationId },
       data: { emailVerifiedAt: new Date() },
     });
+
     return true;
   });
 }
