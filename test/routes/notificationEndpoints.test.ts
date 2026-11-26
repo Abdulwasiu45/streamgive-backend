@@ -49,6 +49,11 @@ describe('admin notification endpoint routes', () => {
     expect(created.statusCode).toBe(201);
     expect(created.json()).not.toHaveProperty('secret');
     expect(created.json().eventTypes).toEqual(['stream_created']);
+    const createAudit = await prisma.adminAuditLog.findFirst({
+      where: { action: 'notification_endpoint.created', targetId: created.json().id },
+    });
+    expect(createAudit?.adminAddress).toBe(adminKeypair.publicKey());
+    expect(createAudit?.summary).not.toContain('private-shared-secret');
 
     const listed = await app.inject({
       method: 'GET',
@@ -118,6 +123,10 @@ describe('admin notification endpoint routes', () => {
     expect(
       (await prisma.notificationEndpoint.findUnique({ where: { id: endpoint.id } }))?.secret,
     ).toBe('rotated-private-secret');
+    const updateAudit = await prisma.adminAuditLog.findFirst({
+      where: { action: 'notification_endpoint.updated', targetId: endpoint.id },
+    });
+    expect(updateAudit?.summary).not.toContain('rotated-private-secret');
 
     const deleted = await app.inject({
       method: 'DELETE',
@@ -126,6 +135,11 @@ describe('admin notification endpoint routes', () => {
     });
     expect(deleted.statusCode).toBe(204);
     expect(await prisma.notificationEndpoint.findUnique({ where: { id: endpoint.id } })).toBeNull();
+    expect(
+      await prisma.adminAuditLog.count({
+        where: { action: 'notification_endpoint.deleted', targetId: endpoint.id },
+      }),
+    ).toBe(1);
 
     await app.close();
   });

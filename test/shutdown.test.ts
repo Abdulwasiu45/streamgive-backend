@@ -46,6 +46,12 @@ vi.mock('../src/notifications/webhookDeliveryWorker.js', () => ({
   startWebhookDeliveryWorker: vi.fn(() => mockStopWebhookDeliveryWorker),
 }));
 
+const mockStopStreamRunningLowWorker = vi.fn().mockResolvedValue(undefined);
+
+vi.mock('../src/notifications/streamRunningLowWorker.js', () => ({
+  startStreamRunningLowWorker: vi.fn(() => mockStopStreamRunningLowWorker),
+}));
+
 // ---------------------------------------------------------------------------
 // Now load the module under test.
 // ---------------------------------------------------------------------------
@@ -62,12 +68,14 @@ describe('shutdown()', () => {
     mockApp.close.mockResolvedValue(undefined);
     mockStopIndexer.mockResolvedValue(undefined);
     mockStopWebhookDeliveryWorker.mockResolvedValue(undefined);
+    mockStopStreamRunningLowWorker.mockResolvedValue(undefined);
   });
 
   it('stops the indexer and closes the server', async () => {
     await shutdown('SIGTERM');
 
     expect(mockStopIndexer).toHaveBeenCalledOnce();
+    expect(mockStopStreamRunningLowWorker).toHaveBeenCalledOnce();
     expect(mockApp.close).toHaveBeenCalledOnce();
   });
 

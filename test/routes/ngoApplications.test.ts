@@ -729,6 +729,13 @@ describe('admin NGO application review', () => {
     expect(stored?.status).toBe('APPROVED');
     expect(stored?.reviewedBy).toBe(adminKeypair.publicKey());
     expect(stored?.reviewedAt).toBeInstanceOf(Date);
+    const audit = await prisma.adminAuditLog.findFirst({
+      where: { action: 'ngo_application.approved', targetId: application.id },
+    });
+    expect(audit).toMatchObject({
+      adminAddress: adminKeypair.publicKey(),
+      summary: 'Approved NGO application',
+    });
     expect(notify).toHaveBeenCalledWith({
       type: 'application_reviewed',
       applicationId: application.id,

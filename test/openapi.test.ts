@@ -28,6 +28,10 @@ function getRegisteredOperations(routeTree: string): Array<{ method: string; pat
       continue;
     }
 
+    if (node[2] === '(empty root node)') {
+      continue;
+    }
+
     const depth = node[1].length / 4;
     const route = /^(.*?) \(([^()]*)\)$/.exec(node[2]);
     segments.length = depth;
@@ -37,11 +41,9 @@ function getRegisteredOperations(routeTree: string): Array<{ method: string; pat
       continue;
     }
 
-    const path = `/${segments
-      .slice(0, depth + 1)
-      .map((segment) => segment.replace(/^\/+|\/+$/g, ''))
-      .filter(Boolean)
-      .join('/')}`.replace(/:([A-Za-z0-9_]+)/g, '{$1}');
+    const path = `/${segments.slice(0, depth + 1).join('')}`
+      .replace(/\/+/g, '/')
+      .replace(/:([A-Za-z0-9_]+)/g, '{$1}');
 
     for (const method of route[2].split(',').map((value) => value.trim())) {
       operations.push({ method: method === 'HEAD' ? 'GET' : method, path });

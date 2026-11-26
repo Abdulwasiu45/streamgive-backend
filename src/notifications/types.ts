@@ -2,6 +2,7 @@ export const NOTIFICATION_EVENT_TYPES = [
   'stream_created',
   'stream_withdrawn',
   'stream_cancelled',
+  'stream_running_low',
   'ngo_registered',
   'ngo_approved',
   'ngo_revoked',
@@ -16,6 +17,14 @@ export type NotificationEvent =
       donorAddress: string;
       ngoId: string;
       eventId?: string;
+    }
+  | {
+      type: 'stream_running_low';
+      streamId: string;
+      donorAddress: string;
+      ngoId: string;
+      remainingSeconds: string;
+      eventId: string;
     }
   | { type: 'stream_withdrawn'; streamId: string; amount: string; eventId?: string }
   | {

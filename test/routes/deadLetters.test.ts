@@ -107,6 +107,14 @@ describe('Admin dead-letter routes', () => {
         resolutionNote: 'Cause corrected manually',
       });
       expect(response.json().deadLetter.resolvedAt).toBeTruthy();
+      const audit = await prisma.adminAuditLog.findFirst({
+        where: { action: 'dead_letter.resolved', targetId: created.id },
+      });
+      expect(audit).toMatchObject({
+        adminAddress: adminKeypair.publicKey(),
+        summary: 'Resolved indexer dead letter',
+      });
+      expect(audit?.summary).not.toContain('Cause corrected manually');
 
       const alreadyResolvedPayload = JSON.stringify({ note: 'Second attempt' });
       const alreadyResolved = await app.inject({

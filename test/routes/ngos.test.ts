@@ -1168,6 +1168,14 @@ describe('PATCH /admin/ngos/:id', () => {
     const updated = await prisma.ngo.findUnique({ where: { id: ngo.id } });
     expect(updated?.displayName).toBe('Curated Public Name');
     expect(updated?.name).toBe('Original Name'); // Original name unchanged
+    const audit = await prisma.adminAuditLog.findFirst({
+      where: { action: 'ngo.display_name.updated', targetId: ngo.id },
+    });
+    expect(audit).toMatchObject({
+      adminAddress: adminKeypair.publicKey(),
+      summary: 'Updated NGO display name override',
+    });
+    expect(audit?.summary).not.toContain('Curated Public Name');
 
     await app.close();
   });

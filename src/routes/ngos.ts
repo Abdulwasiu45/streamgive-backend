@@ -4,6 +4,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 
 import { Prisma } from '../generated/prisma/client.js';
+import { recordAdminAction } from '../audit/adminAudit.js';
 import { prisma } from '../db.js';
 import { sendPublicCacheable } from './cacheable.js';
 import { escapeCsvField } from './donors.js';
@@ -545,9 +546,24 @@ export async function ngoRoutes(app: FastifyInstance): Promise<void> {
       return reply.code(404).send({ error: 'not_found' });
     }
 
-    const updated = await prisma.ngo.update({
-      where: { id: ngo.id },
-      data: { displayName: parsedBody.data.displayName },
+    const adminAddress = request.headers['x-admin-address'];
+    if (typeof adminAddress !== 'string') {
+      return reply.code(401).send({ error: 'unauthorized' });
+    }
+
+    const updated = await prisma.$transaction(async (tx) => {
+      const result = await tx.ngo.update({
+        where: { id: ngo.id },
+        data: { displayName: parsedBody.data.displayName },
+      });
+      await recordAdminAction(
+        tx,
+        adminAddress,
+        'ngo.display_name.updated',
+        ngo.id,
+        'Updated NGO display name override',
+      );
+      return result;
     });
 
     return { ...updated, name: updated.displayName || updated.name };

@@ -867,8 +867,41 @@
           "Streams"
         ],
         "description": "Returns distinct stream token addresses with the number of streams for each.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 100
+            },
+            "in": "query",
+            "name": "limit",
+            "required": false
+          },
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^C[A-Z2-7]{55}$"
+            },
+            "in": "query",
+            "name": "cursor",
+            "required": false
+          }
+        ],
         "responses": {
           "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "400": {
             "description": "Default Response",
             "content": {
               "application/json": {
@@ -1646,6 +1679,7 @@
                         "stream_created",
                         "stream_withdrawn",
                         "stream_cancelled",
+                        "stream_running_low",
                         "ngo_registered",
                         "ngo_approved",
                         "ngo_revoked",
@@ -1755,6 +1789,7 @@
                         "stream_created",
                         "stream_withdrawn",
                         "stream_cancelled",
+                        "stream_running_low",
                         "ngo_registered",
                         "ngo_approved",
                         "ngo_revoked",
@@ -2120,10 +2155,126 @@
         }
       }
     },
+    "/v1/admin/audit-logs": {
+      "get": {
+        "summary": "List admin audit log entries",
+        "tags": [
+          "Admin"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^G[A-Z2-7]{55}$"
+            },
+            "in": "query",
+            "name": "adminAddress",
+            "required": false
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 100
+            },
+            "in": "query",
+            "name": "action",
+            "required": false
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "in": "query",
+            "name": "targetId",
+            "required": false
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 50
+            },
+            "in": "query",
+            "name": "limit",
+            "required": false
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 50000,
+              "default": 0
+            },
+            "in": "query",
+            "name": "offset",
+            "required": false
+          }
+        ],
+        "security": [
+          {
+            "AdminAddress": [],
+            "AdminSignature": [],
+            "AdminTimestamp": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/admin/overview": {
       "get": {
         "summary": "Admin overview of queue sizes and failures",
-        "tags": ["Admin"],
+        "tags": [
+          "Admin"
+        ],
         "security": [
           {
             "AdminAddress": [],

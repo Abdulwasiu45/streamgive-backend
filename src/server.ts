@@ -24,6 +24,7 @@ import { serverLifecyclePlugin } from './plugins/serverLifecycle.js';
 import { serverSecurityPlugin } from './plugins/serverSecurity.js';
 import { versionRoutePlugin } from './plugins/versionRoute.js';
 import { registerLogRetention } from './maintenance/logRetention.js';
+import { adminAuditLogRoutes } from './routes/adminAuditLogs.js';
 
 // pino-pretty uses a worker thread; avoid its overhead in production and tests.
 const USE_PRETTY_LOGS = !['production', 'test'].includes(process.env.NODE_ENV ?? '');
@@ -131,6 +132,7 @@ export function buildServer(options?: BuildServerOptions) {
   app.register(deadLetterRoutes, apiPrefix);
   app.register(notificationEndpointRoutes, apiPrefix);
   app.register(notificationLogRoutes, apiPrefix);
+  app.register(adminAuditLogRoutes, apiPrefix);
   app.register(adminOverviewRoutes, apiPrefix);
   registerLogRetention(app);
 

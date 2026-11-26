@@ -106,6 +106,28 @@ refunding the remaining balance to the donor.
 }
 ```
 
+## `stream_running_low`
+
+Emitted once when an active stream's remaining balance is within the configured
+`STREAM_RUNNING_LOW_DAYS` threshold (seven days by default). The check runs
+hourly and uses the stream's current balance and rate. A notification marker is
+stored on the stream so it is not emitted again after a restart.
+
+```json
+{
+  "type": "stream_running_low",
+  "streamId": "1234",
+  "donorAddress": "GABC...",
+  "ngoId": "clx1y2z3...",
+  "remainingSeconds": "604800",
+  "eventId": "stream-running-low:clx1y2z3..."
+}
+```
+
+- `remainingSeconds` — estimated whole seconds of funding remaining at the
+  current stream rate.
+- `eventId` — stable per-stream id used to deduplicate webhook deliveries.
+
 ## `application_submitted`
 
 Emitted when an NGO application is submitted through the API.

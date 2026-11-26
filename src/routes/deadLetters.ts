@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 
+import { recordAdminAction } from '../audit/adminAudit.js';
 import { prisma } from '../db.js';
 import { requireAdminSignature } from '../middleware/adminAuth.js';
 
@@ -217,34 +218,46 @@ export async function deadLetterRoutes(app: FastifyInstance): Promise<void> {
       }
 
       const id = parsedParams.data.id;
-      const existing = await prisma.indexerDeadLetter.findUnique({ where: { id } });
-      if (!existing) {
-        return reply.code(404).send({ error: 'dead_letter_not_found' });
-      }
-
       const resolvedBy = request.headers['x-admin-address'];
       if (typeof resolvedBy !== 'string') {
         return reply.code(401).send({ error: 'unauthorized' });
       }
 
-      const result = await prisma.indexerDeadLetter.updateMany({
-        where: { id, resolvedAt: null },
-        data: {
-          resolvedAt: new Date(),
+      const result = await prisma.$transaction(async (tx) => {
+        const existing = await tx.indexerDeadLetter.findUnique({ where: { id } });
+        if (!existing) return { status: 'not_found' as const };
+
+        const updated = await tx.indexerDeadLetter.updateMany({
+          where: { id, resolvedAt: null },
+          data: {
+            resolvedAt: new Date(),
+            resolvedBy,
+            resolutionNote: parsedBody.data.note || null,
+          },
+        });
+        if (updated.count === 0) return { status: 'already_resolved' as const };
+
+        await recordAdminAction(
+          tx,
           resolvedBy,
-          resolutionNote: parsedBody.data.note || null,
-        },
+          'dead_letter.resolved',
+          id,
+          'Resolved indexer dead letter',
+        );
+        const deadLetter = await tx.indexerDeadLetter.findUniqueOrThrow({ where: { id } });
+        return { status: 'resolved' as const, deadLetter };
       });
-      if (result.count === 0) {
+      if (result.status === 'not_found') {
+        return reply.code(404).send({ error: 'dead_letter_not_found' });
+      }
+      if (result.status === 'already_resolved') {
         return reply.code(409).send({
           error: 'dead_letter_already_resolved',
           message: 'Dead letter has already been resolved',
         });
       }
 
-      return {
-        deadLetter: await prisma.indexerDeadLetter.findUniqueOrThrow({ where: { id } }),
-      };
+      return { deadLetter: result.deadLetter };
     },
   );
 }

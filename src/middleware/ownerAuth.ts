@@ -83,7 +83,6 @@ export async function requireOwnerSignature(
   }
 
   const replayKey = `${address}:${timestampRaw}:${signature}`;
-  pruneUsedOwnerSignatures(now);
   if (usedOwnerSignatures.has(replayKey)) {
     return reply.code(401).send({ error: 'replayed_signature' });
   }

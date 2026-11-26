@@ -8,6 +8,7 @@ import { dispatchEvent } from './indexer/dispatch.js';
 import { startIndexer } from './indexer/worker.js';
 import { logger } from './logger.js';
 import { startWebhookDeliveryWorker } from './notifications/webhookDeliveryWorker.js';
+import { startStreamRunningLowWorker } from './notifications/streamRunningLowWorker.js';
 import { buildServer } from './server.js';
 
 function fail(message: string): never {
@@ -47,6 +48,7 @@ const app = (() => {
 // event gets retried on the next poll instead of silently skipped.
 const stopIndexer = startIndexer(dispatchEvent);
 const stopWebhookDeliveryWorker = startWebhookDeliveryWorker();
+const stopStreamRunningLowWorker = startStreamRunningLowWorker(config.STREAM_RUNNING_LOW_DAYS);
 
 /**
  * Tear down the indexer and HTTP server, then resolve. The caller is
@@ -62,6 +64,8 @@ export async function shutdown(signal: string): Promise<void> {
     await stopIndexer();
     running = 'webhook delivery worker';
     await stopWebhookDeliveryWorker();
+    running = 'stream running low worker';
+    await stopStreamRunningLowWorker();
     running = 'HTTP server and database connections';
     await app.close();
   };

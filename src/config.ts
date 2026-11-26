@@ -14,6 +14,7 @@ export const DEFAULT_INDEXER_POLL_INTERVAL_MS = 5000;
 export const DEFAULT_LOG_RETENTION_DAYS = 90;
 export const DEFAULT_RATE_LIMIT_APPLICATION_MAX = 5;
 export const DEFAULT_RATE_LIMIT_APPLICATION_WINDOW = '1 minute';
+export const DEFAULT_STREAM_RUNNING_LOW_DAYS = 7;
 export const DEFAULT_NOTIFY_WEBHOOK_TIMEOUT_MS = 3000;
 export const DEFAULT_SLOW_REQUEST_THRESHOLD_MS = 1000;
 export const DEFAULT_SHUTDOWN_TIMEOUT_MS = 30_000;
@@ -287,6 +288,10 @@ export const configSchema = z.object({
     .string()
     .optional()
     .transform((v) => configured(v)),
+  STREAM_RUNNING_LOW_DAYS: positiveIntSchema(
+    'STREAM_RUNNING_LOW_DAYS',
+    DEFAULT_STREAM_RUNNING_LOW_DAYS,
+  ),
   MAINTENANCE_MODE: z
     .string()
     .optional()
