@@ -23,6 +23,7 @@ Guides and reference documents for the StreamGive backend are listed below.
 - [API reference](API.md) — Endpoints, parameters, authentication, and response examples.
 - [API versioning](API-VERSIONING.md) — API compatibility and versioning policy.
 - [Data model](DATA-MODEL.md) — Database entities, relationships, and derived API statistics.
+- [Data retention](DATA-RETENTION.md) — What each table stores, its personal data, and when rows are deleted.
 - [Admin request signing example](../src/scripts/signAdminRequest.ts) — TypeScript helper that prints a signed admin request as a `curl` command.
 - [Notifications](NOTIFICATIONS.md) — Notification event types and delivery behavior.
 - [Webhook receiver guide](WEBHOOKS.md) — Signature verification, retries, ordering, and idempotency for webhook consumers.
