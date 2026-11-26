@@ -185,6 +185,9 @@ model NotificationEndpoint {
   id         String   @id @default(uuid())
   url        String
   secret     String
+  /// Secret replaced by the last rotation. Until `previousSecretExpiresAt`, deliveries also carry a signature made with it.
+  previousSecret          String?   @map("previous_secret")
+  previousSecretExpiresAt DateTime? @map("previous_secret_expires_at")
   eventTypes String[] @default([]) @map("event_types")
   enabled    Boolean  @default(true)
   createdAt  DateTime @default(now()) @map("created_at")
@@ -210,6 +213,8 @@ model WebhookDelivery {
   channel       String
   url           String
   secret        String?
+  previousSecret          String?   @map("previous_secret")
+  previousSecretExpiresAt DateTime? @map("previous_secret_expires_at")
   payload       String
   status        WebhookDeliveryStatus @default(PENDING)
   attempts      Int                   @default(0)
