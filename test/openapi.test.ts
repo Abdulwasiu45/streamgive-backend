@@ -23,7 +23,7 @@ function getRegisteredOperations(routeTree: string): Array<{ method: string; pat
   const operations: Array<{ method: string; path: string }> = [];
 
   for (const line of routeTree.split('\n')) {
-    const node = /^((?: {4}|│   )*)(?:├──|└──)\s+(.*)$/.exec(line);
+    const node = /^((?: {4}|│ {3})*)(?:├──|└──)\s+(.*)$/.exec(line);
     if (node === null) {
       continue;
     }
@@ -64,7 +64,7 @@ describe('OpenAPI documentation', () => {
 
     try {
       const paths = app.swagger().paths ?? {};
-      const missing = getRegisteredOperations(app.printRoutes())
+      const missing = getRegisteredOperations(app.printRoutes({ commonPrefix: false }))
         .filter(({ method, path }) => {
           if (
             OPENAPI_ROUTE_ALLOWLIST.has(`${method} ${path}`) ||

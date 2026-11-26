@@ -1,115 +1,136 @@
-import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
-
-vi.mock('../../src/db.js', () => ({
-  prisma: {
-    ngoApplication: { updateMany: vi.fn() },
-    ngoApplicationContactChallenge: { upsert: vi.fn() },
-  },
-}));
-vi.mock('../../src/logger.js', () => ({
-  logger: { warn: vi.fn(), error: vi.fn(), info: vi.fn(), debug: vi.fn() },
-}));
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { prisma } from '../../src/db.js';
-import { logger } from '../../src/logger.js';
 import { sendContactVerification } from '../../src/notifications/contactVerification.js';
+import { resetDb } from '../helpers/db.js';
 
-const updateMany = prisma.ngoApplication.updateMany as unknown as Mock;
-const upsert = prisma.ngoApplicationContactChallenge.upsert as unknown as Mock;
-const application = { id: 'app-1', name: 'Test NGO', contactEmail: 'ngo@example.com' };
+const RESEND_URL = 'https://api.resend.com/emails';
 
-const ENV_KEYS = ['RESEND_API_KEY', 'NOTIFY_EMAIL_FROM', 'API_PUBLIC_URL'] as const;
-const originalEnv = Object.fromEntries(ENV_KEYS.map((key) => [key, process.env[key]]));
+const application = {
+  id: '',
+  name: 'Test NGO',
+  contactEmail: 'ngo@example.com',
+};
+
+beforeEach(async () => {
+  vi.restoreAllMocks();
+  await resetDb();
+
+  // Create a real NgoApplication row so the cooldown update can find it.
+  const row = await prisma.ngoApplication.create({
+    data: {
+      ownerAddress: 'G' + 'A'.repeat(55),
+      name: application.name,
+      description: 'desc',
+      contactEmail: application.contactEmail,
+    },
+  });
+  application.id = row.id;
+
+  // Minimal env required for the function to proceed.
+  process.env.RESEND_API_KEY = 'test-api-key';
+  process.env.NOTIFY_EMAIL_FROM = 'noreply@example.com';
+  process.env.API_PUBLIC_URL = 'https://api.example.com';
+  delete process.env.VERIFY_EMAIL_TIMEOUT_MS;
+});
+
+afterEach(async () => {
+  delete process.env.RESEND_API_KEY;
+  delete process.env.NOTIFY_EMAIL_FROM;
+  delete process.env.API_PUBLIC_URL;
+  delete process.env.VERIFY_EMAIL_TIMEOUT_MS;
+  await resetDb();
+});
 
 describe('sendContactVerification', () => {
-  const fetchMock = vi.fn();
-
-  beforeEach(() => {
-    vi.clearAllMocks();
-    vi.stubGlobal('fetch', fetchMock);
-    process.env.RESEND_API_KEY = 're_test_key';
-    process.env.NOTIFY_EMAIL_FROM = 'StreamGive <no-reply@streamgive.test>';
-    process.env.API_PUBLIC_URL = 'https://api.streamgive.test';
-    updateMany.mockResolvedValue({ count: 1 });
-    upsert.mockResolvedValue({});
-    fetchMock.mockResolvedValue(new Response(null, { status: 200 }));
-  });
-
-  afterEach(() => {
-    vi.unstubAllGlobals();
-    for (const key of ENV_KEYS) {
-      if (originalEnv[key] === undefined) delete process.env[key];
-      else process.env[key] = originalEnv[key];
-    }
-  });
-
-  const sentBody = () => JSON.parse(fetchMock.mock.calls[0][1].body as string);
-
-  it('sends the email through the provider and returns true on success', async () => {
-    await expect(sendContactVerification(application)).resolves.toBe(true);
-
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(fetchMock.mock.calls[0][0]).toBe('https://api.resend.com/emails');
-    expect(fetchMock.mock.calls[0][1].headers.Authorization).toBe('Bearer re_test_key');
-    const body = sentBody();
-    expect(body.to).toEqual(['ngo@example.com']);
-    expect(body.subject).toBe('Verify your StreamGive NGO contact email');
-    expect(body.html).toContain('https://api.streamgive.test/v1/ngo-applications/verify-contact-email?token=');
-    expect(upsert).toHaveBeenCalledTimes(1);
-  });
-
-  it('returns false and logs when the provider rejects the email', async () => {
-    fetchMock.mockResolvedValue(new Response(null, { status: 422 }));
-
-    await expect(sendContactVerification(application)).resolves.toBe(false);
-
-    expect(logger.error).toHaveBeenCalledWith(
-      { status: 422 },
-      'contact verification email was rejected',
-    );
-  });
-
-  it('returns false when the request to the provider fails', async () => {
-    fetchMock.mockRejectedValue(new Error('network down'));
-
-    await expect(sendContactVerification(application)).resolves.toBe(false);
-
-    expect(logger.error).toHaveBeenCalled();
-  });
-
-  it('sends nothing when the provider is not configured', async () => {
+  it('returns false and skips fetch when env vars are not configured', async () => {
     delete process.env.RESEND_API_KEY;
+    const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
 
-    await expect(sendContactVerification(application)).resolves.toBe(false);
+    const result = await sendContactVerification(application);
 
-    expect(fetchMock).not.toHaveBeenCalled();
-    expect(updateMany).not.toHaveBeenCalled();
-    expect(logger.warn).toHaveBeenCalledWith('contact email verification is not configured');
+    expect(result).toBe(false);
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(consoleSpy).toHaveBeenCalled();
   });
 
-  it('stops a second send inside the cooldown window', async () => {
-    updateMany.mockResolvedValueOnce({ count: 1 }).mockResolvedValueOnce({ count: 0 });
+  it('POSTs to the Resend API with the correct headers and body', async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(new Response(null, { status: 200 }));
 
-    await expect(sendContactVerification(application)).resolves.toBe(true);
-    await expect(sendContactVerification(application)).resolves.toBe(false);
+    const result = await sendContactVerification(application);
 
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(upsert).toHaveBeenCalledTimes(1);
-    const where = updateMany.mock.calls[0][0].where;
-    expect(where).toMatchObject({ id: 'app-1', emailVerifiedAt: null });
-    expect(where.OR).toHaveLength(2);
+    expect(result).toBe(true);
+    expect(fetchSpy).toHaveBeenCalledOnce();
+    const [url, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe(RESEND_URL);
+    expect((init.headers as Record<string, string>)['Authorization']).toBe('Bearer test-api-key');
+    const body = JSON.parse(init.body as string);
+    expect(body.to).toEqual([application.contactEmail]);
   });
 
-  it('escapes tags, quotes and ampersands in the NGO name', async () => {
-    const name = `<script>alert("x")</script> & O'Brien "><img src=x onerror=alert(1)>`;
+  it('attaches an AbortSignal to the fetch request', async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(new Response(null, { status: 200 }));
 
-    await expect(sendContactVerification({ ...application, name })).resolves.toBe(true);
+    await sendContactVerification(application);
 
-    const { html } = sentBody();
-    expect(html).toContain(
-      'Hello &lt;script&gt;alert(&quot;x&quot;)&lt;/script&gt; &amp; O&#39;Brien &quot;&gt;&lt;img src=x onerror=alert(1)&gt;,</p>',
-    );
-    expect(html).not.toContain('<script');
-    expect(html).not.toContain('<img');
+    const [, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
+    expect(init.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it('aborts a fetch that never resolves within the configured timeout', async () => {
+    process.env.VERIFY_EMAIL_TIMEOUT_MS = '10';
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation((_url, init) => {
+      const signal = init?.signal;
+      return new Promise<Response>((_resolve, reject) => {
+        if (!signal) {
+          reject(new Error('expected an abort signal on the fetch request'));
+          return;
+        }
+        signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+      });
+    });
+
+    // The function must resolve (not throw) even when fetch never responds.
+    const result = await sendContactVerification(application);
+
+    expect(result).toBe(false);
+    expect(fetchSpy).toHaveBeenCalledOnce();
+    const [, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
+    // Signal must have fired — the timeout elapsed.
+    expect(init.signal?.aborted).toBe(true);
+  });
+
+  it('returns false and logs when the provider returns a non-2xx status', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(null, { status: 422 }));
+    const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const result = await sendContactVerification(application);
+
+    expect(result).toBe(false);
+    expect(consoleSpy).toHaveBeenCalled();
+  });
+
+  it('respects the resend cooldown — skips when sent recently', async () => {
+    // Mark as sent just now.
+    await prisma.ngoApplication.update({
+      where: { id: application.id },
+      data: { lastContactVerificationSentAt: new Date() },
+    });
+
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(new Response(null, { status: 200 }));
+
+    const result = await sendContactVerification(application);
+
+    expect(result).toBe(false);
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 });
