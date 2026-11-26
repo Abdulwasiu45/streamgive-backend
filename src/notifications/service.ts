@@ -39,11 +39,36 @@ function rememberDelivered(eventId: string): void {
 const SIGNATURE_HEADER = 'x-streamgive-signature';
 const DELIVERY_ID_HEADER = 'x-streamgive-delivery-id';
 const TIMESTAMP_HEADER = 'x-streamgive-timestamp';
+/** Signature made with the previous secret while a rotation overlap is open. */
+const PREVIOUS_SIGNATURE_HEADER = 'x-streamgive-signature-previous';
+/** How long the previous secret keeps signing after an endpoint's secret is changed. */
+export const SECRET_ROTATION_OVERLAP_MS = 24 * 60 * 60 * 1000;
 export const MAX_WEBHOOK_DELIVERY_ATTEMPTS = 5;
 const RETRY_BASE_MS = 1_000;
 const RETRY_MAX_MS = 60 * 60 * 1_000;
 
-type WebhookTarget = { url: string; secret?: string; channel: string };
+type WebhookTarget = {
+  url: string;
+  secret?: string;
+  previousSecret?: string;
+  previousSecretExpiresAt?: Date;
+  channel: string;
+};
+
+function sign(secret: string, timestamp: string, deliveryId: string, body: string): string {
+  return `v1=${createHmac('sha256', secret).update(`${timestamp}.${deliveryId}.${body}`).digest('hex')}`;
+}
+
+/** The previous secret signs only while its rotation overlap is still open. */
+function activePreviousSecret(target: {
+  previousSecret?: string | null;
+  previousSecretExpiresAt?: Date | null;
+}): string | undefined {
+  const { previousSecret, previousSecretExpiresAt } = target;
+  return previousSecret && previousSecretExpiresAt && previousSecretExpiresAt.getTime() > Date.now()
+    ? previousSecret
+    : undefined;
+}
 type WebhookResult = { success: boolean; recordNoop: boolean };
 type WebhookAttemptResult = { success: boolean; error?: string };
 
@@ -93,10 +118,9 @@ async function sendWebhookAttempt(
   // secret without a restart, and so tests can set it per case.
   const secret = target.secret;
   if (secret) {
-    const signature = createHmac('sha256', secret)
-      .update(`${timestamp}.${deliveryId}.${body}`)
-      .digest('hex');
-    headers[SIGNATURE_HEADER] = `v1=${signature}`;
+    headers[SIGNATURE_HEADER] = sign(secret, timestamp, deliveryId, body);
+    const previous = activePreviousSecret(target);
+    if (previous) headers[PREVIOUS_SIGNATURE_HEADER] = sign(previous, timestamp, deliveryId, body);
   }
 
   let success = false;
@@ -174,6 +198,8 @@ export async function sendWebhookPing(target: {
   id: string;
   url: string;
   secret: string;
+  previousSecret?: string | null;
+  previousSecretExpiresAt?: Date | null;
 }): Promise<WebhookPingResult> {
   const deliveryId = `ping-${randomUUID()}`;
   const body = JSON.stringify({
@@ -182,15 +208,14 @@ export async function sendWebhookPing(target: {
     sentAt: new Date().toISOString(),
   });
   const timestamp = Math.floor(Date.now() / 1000).toString();
-  const signature = createHmac('sha256', target.secret)
-    .update(`${timestamp}.${deliveryId}.${body}`)
-    .digest('hex');
   const headers: Record<string, string> = {
     'content-type': 'application/json',
     [DELIVERY_ID_HEADER]: deliveryId,
     [TIMESTAMP_HEADER]: timestamp,
-    [SIGNATURE_HEADER]: `v1=${signature}`,
+    [SIGNATURE_HEADER]: sign(target.secret, timestamp, deliveryId, body),
   };
+  const previous = activePreviousSecret(target);
+  if (previous) headers[PREVIOUS_SIGNATURE_HEADER] = sign(previous, timestamp, deliveryId, body);
 
   if (!(await isSafeWebhookUrl(target.url))) {
     return { ok: false, statusCode: null, latencyMs: 0, deliveryId, error: 'unsafe_destination' };
@@ -264,6 +289,8 @@ export async function processWebhookDelivery(deliveryId: string): Promise<boolea
   const target: WebhookTarget = {
     url: delivery.url,
     secret: delivery.secret ?? undefined,
+    previousSecret: delivery.previousSecret ?? undefined,
+    previousSecretExpiresAt: delivery.previousSecretExpiresAt ?? undefined,
     channel: delivery.channel,
   };
   const result = await sendWebhookAttempt(event, target, delivery.id, delivery.payload);
@@ -310,6 +337,8 @@ async function queueWebhookDelivery(
     channel: target.channel,
     url: target.url,
     secret: target.secret ?? null,
+    previousSecret: target.previousSecret ?? null,
+    previousSecretExpiresAt: target.previousSecretExpiresAt ?? null,
     payload,
     maxAttempts: MAX_WEBHOOK_DELIVERY_ATTEMPTS,
   };
@@ -339,6 +368,8 @@ async function notifyWebhook(event: NotificationEvent): Promise<WebhookResult> {
     .map((endpoint) => ({
       url: endpoint.url,
       secret: endpoint.secret,
+      previousSecret: endpoint.previousSecret ?? undefined,
+      previousSecretExpiresAt: endpoint.previousSecretExpiresAt ?? undefined,
       channel: `webhook:${endpoint.id}`,
     }));
 
