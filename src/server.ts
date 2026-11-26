@@ -1,6 +1,7 @@
 import Fastify from 'fastify';
 
 import { parseConfig } from './config.js';
+import { envInt } from './config/env.js';
 import { adminOverviewRoutes } from './routes/adminOverview.js';
 import { donorRoutes } from './routes/donors.js';
 import { impactRoutes } from './routes/impact.js';
