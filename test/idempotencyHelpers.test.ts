@@ -14,6 +14,7 @@ vi.mock('../src/db.js', () => ({
 import { prisma } from '../src/db.js';
 import { Prisma } from '../src/generated/prisma/client.js';
 import {
+  IDEMPOTENCY_LOCK_TTL_MS,
   IDEMPOTENCY_WINDOW_MS,
   abandonIdempotentRequest,
   beginIdempotentRequest,
@@ -115,6 +116,7 @@ describe('beginIdempotentRequest', () => {
       requestHash: hash,
       statusCode: null,
       response: null,
+      createdAt: now,
       expiresAt: later,
     });
 
@@ -122,6 +124,22 @@ describe('beginIdempotentRequest', () => {
       kind: 'conflict',
       error: 'idempotency_request_in_progress',
     });
+  });
+
+  it('lets a retry take over a placeholder left behind by a crashed request', async () => {
+    records.findUnique.mockResolvedValue({
+      requestHash: hash,
+      statusCode: null,
+      response: null,
+      createdAt: new Date(now.getTime() - IDEMPOTENCY_LOCK_TTL_MS - 1),
+      expiresAt: later,
+    });
+
+    await expect(beginIdempotentRequest('scope', 'key-1', hash, now)).resolves.toEqual({
+      kind: 'proceed',
+      key: 'scope:key-1',
+    });
+    expect(records.deleteMany).toHaveBeenCalledWith({ where: { key: 'scope:key-1' } });
   });
 
   it('starts over when the record expired between calls, even with a different body', async () => {
@@ -135,9 +153,7 @@ describe('beginIdempotentRequest', () => {
     const result = await beginIdempotentRequest('scope', 'key-1', hash, now);
 
     expect(result).toEqual({ kind: 'proceed', key: 'scope:key-1' });
-    expect(records.deleteMany).toHaveBeenCalledWith({
-      where: { key: 'scope:key-1', expiresAt: { lte: now } },
-    });
+    expect(records.deleteMany).toHaveBeenCalledWith({ where: { key: 'scope:key-1' } });
     expect(records.create).toHaveBeenCalledTimes(1);
   });
 
