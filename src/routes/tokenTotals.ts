@@ -2,7 +2,7 @@ export interface StreamForTokenTotals {
   tokenAddress: string;
   balance: string;
   withdrawn: string;
-  status: 'ACTIVE' | 'CANCELLED';
+  status: 'ACTIVE' | 'PAUSED' | 'CANCELLED';
 }
 
 export interface TokenTotal {
