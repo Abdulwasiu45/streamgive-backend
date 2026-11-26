@@ -42,6 +42,15 @@ describe('computeStreamState', () => {
     ).toEqual({ balance: '0', withdrawn: '1205', status: 'CANCELLED' });
   });
 
+  it('keeps a stream paused until it is resumed', () => {
+    const pause = { type: 'pause', payload: {} };
+    const resume = { type: 'resume', payload: {} };
+    expect(computeStreamState([created, pause])?.status).toBe('PAUSED');
+    expect(computeStreamState([created, pause, resume])?.status).toBe('ACTIVE');
+    expect(computeStreamState([created, resume])?.status).toBe('ACTIVE');
+    expect(computeStreamState([created, pause, cancel('0')])?.status).toBe('CANCELLED');
+  });
+
   it('returns null without a created event and rejects a malformed payload', () => {
     expect(computeStreamState([withdraw('10')])).toBeNull();
     expect(() => computeStreamState([created, { type: 'withdraw', payload: {} }])).toThrow(

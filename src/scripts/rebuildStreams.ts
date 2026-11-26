@@ -4,7 +4,7 @@ import { pathToFileURL } from 'node:url';
 
 import { prisma } from '../db.js';
 
-export type StreamStatusValue = 'ACTIVE' | 'CANCELLED';
+export type StreamStatusValue = 'ACTIVE' | 'PAUSED' | 'CANCELLED';
 
 export interface StreamState {
   balance: string;
@@ -63,6 +63,10 @@ export function computeStreamState(events: readonly StoredStreamEvent[]): Stream
       const next = state.balance - accrued;
       state.balance = next < 0n ? 0n : next;
       state.withdrawn += accrued;
+    } else if (event.type === 'pause') {
+      if (state.status === 'ACTIVE') state.status = 'PAUSED';
+    } else if (event.type === 'resume') {
+      if (state.status === 'PAUSED') state.status = 'ACTIVE';
     } else if (event.type === 'cancel') {
       state.withdrawn += amount(event.payload, 'accrued');
       state.balance = 0n;
