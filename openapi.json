@@ -486,6 +486,7 @@
               "type": "string",
               "enum": [
                 "ACTIVE",
+                "PAUSED",
                 "CANCELLED"
               ]
             },

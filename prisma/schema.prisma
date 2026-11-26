@@ -35,6 +35,8 @@ model Ngo {
   verified     Boolean  @default(false)
   /// When the registry last approved this NGO; null while unverified.
   verifiedAt       DateTime? @map("verified_at")
+  /// When the registry's verification expires; null when it has no expiry. Past this instant the NGO counts as unverified.
+  verifiedUntil    DateTime? @map("verified_until")
   /// Owner-updated public description; falls back to approved application when null.
   description      String?
   /// Owner-updated public website; falls back to approved application when null.
@@ -52,6 +54,7 @@ model Ngo {
 
 enum StreamStatus {
   ACTIVE
+  PAUSED
   CANCELLED
 }
 
@@ -75,6 +78,8 @@ model Stream {
   /// Transaction hash of the on-chain transaction that created this stream.
   /// Null for streams indexed before this field was added.
   createdTxHash String?      @map("created_tx_hash")
+  /// When the donor paused the stream; null unless the status is PAUSED.
+  pausedAt      DateTime?    @map("paused_at")
   createdAt     DateTime     @default(now()) @map("created_at")
   updatedAt     DateTime     @updatedAt @map("updated_at")
 

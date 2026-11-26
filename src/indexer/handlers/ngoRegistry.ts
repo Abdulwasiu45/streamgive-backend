@@ -4,6 +4,18 @@ import { prisma } from '../../db.js';
 import { dispatchNotification } from '../../notifications/service.js';
 import type { ContractEvent } from '../worker.js';
 
+/** Reads the optional expiry (seconds since the epoch) from an `approved`/`renewed` payload. */
+function parseVerifiedUntil(value: ContractEvent['value']): Date | null {
+  try {
+    const native = scValToNative(value) as unknown;
+    const seconds = typeof native === 'bigint' ? Number(native) : native;
+    if (typeof seconds !== 'number' || !Number.isFinite(seconds) || seconds <= 0) return null;
+    return new Date(seconds * 1000);
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Entry point for all ngo-registry contract events. Handles `register`,
  * `approved`, and `revoked` from the same function.
@@ -19,6 +31,11 @@ import type { ContractEvent } from '../worker.js';
  * (not `update`, so a stray `approved` seen without a prior `register` —
  * e.g. the indexer started mid-history — doesn't throw). Persists a
  * `StreamEvent` row in the same transaction.
+ *
+ * `approved` and `renewed` carry an optional expiry (a u64 of seconds since the
+ * epoch); when present it is stored as `verifiedUntil`, otherwise the
+ * verification has no expiry. `renewed` re-verifies an NGO and replaces the
+ * expiry the same way.
  *
  * `revoked` — emitted when an admin revokes a previously-approved NGO.
  * Writes: sets `verified: false` and clears `verifiedAt` on the matching
@@ -66,20 +83,25 @@ export async function handleNgoRegistryEvent(event: ContractEvent): Promise<void
     return;
   }
 
-  if (topic === 'approved') {
+  if (topic === 'approved' || topic === 'renewed') {
+    const verifiedUntil = parseVerifiedUntil(event.value);
     await prisma.$transaction(async (tx) => {
       await tx.ngo.updateMany({
         where: { ownerAddress },
-        data: { verified: true, verifiedAt: new Date(event.ledgerClosedAt) },
+        data: {
+          verified: true,
+          ...(topic === 'approved' ? { verifiedAt: new Date(event.ledgerClosedAt) } : {}),
+          verifiedUntil,
+        },
       });
 
       await tx.streamEvent.create({
         data: {
-          type: 'approved',
+          type: topic,
           streamId: null,
           ledger: event.ledger,
           txHash: event.txHash,
-          payload: { ownerAddress },
+          payload: { ownerAddress, verifiedUntil: verifiedUntil?.toISOString() ?? null },
         },
       });
     });
@@ -100,7 +122,7 @@ export async function handleNgoRegistryEvent(event: ContractEvent): Promise<void
     await prisma.$transaction(async (tx) => {
       await tx.ngo.updateMany({
         where: { ownerAddress },
-        data: { verified: false, verifiedAt: null },
+        data: { verified: false, verifiedAt: null, verifiedUntil: null },
       });
 
       await tx.streamEvent.create({

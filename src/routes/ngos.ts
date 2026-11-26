@@ -10,6 +10,7 @@ import { escapeCsvField } from './donors.js';
 import { requireAdminSignature } from '../middleware/adminAuth.js';
 import { requireOwnerSignature } from '../middleware/ownerAuth.js';
 import { getPublicNgoName } from './ngoName.js';
+import { isVerifiedAt } from './ngoVerification.js';
 import { committedTotalsByToken } from './tokenTotals.js';
 
 /** Params for NGO detail, donor, and admin update routes; `id` must be an NGO UUID. */
@@ -42,6 +43,7 @@ interface NgoListRow {
   name: string;
   displayName: string | null;
   verified: boolean;
+  verifiedUntil: Date | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -97,7 +99,7 @@ const donorListQuerySchema = z.object({
 });
 
 function committedAmount(stream: {
-  status: 'ACTIVE' | 'CANCELLED';
+  status: 'ACTIVE' | 'PAUSED' | 'CANCELLED';
   balance: string;
   withdrawn: string;
 }): bigint {
@@ -191,6 +193,8 @@ async function findNgoDetail(where: { id: string } | { ownerAddress: string }) {
 
   return {
     ...ngo,
+    verified: isVerifiedAt(ngo),
+    verifiedUntil: ngo.verifiedUntil ?? null,
     name: getPublicNgoName(ngo) || null,
     registered: ngo.name !== '',
     description: ngo.description ?? approvedApp?.description ?? null,
@@ -248,10 +252,12 @@ export async function ngoRoutes(app: FastifyInstance): Promise<void> {
         ngo.name,
         ngo.display_name AS "displayName",
         ngo.verified,
+        ngo.verified_until AS "verifiedUntil",
         ngo.created_at AS "createdAt",
         ngo.updated_at AS "updatedAt"
       FROM ngos AS ngo
       WHERE ngo.verified = TRUE
+        AND (ngo.verified_until IS NULL OR ngo.verified_until > (NOW() AT TIME ZONE 'UTC'))
         AND (
           ${q ?? null}::text IS NULL
           OR COALESCE(NULLIF(ngo.display_name, ''), ngo.name) ILIKE '%' || ${q ?? null} || '%'
@@ -513,7 +519,7 @@ export async function ngoRoutes(app: FastifyInstance): Promise<void> {
     if (ngo.ownerAddress !== ownerAddress) {
       return reply.code(403).send({ error: 'forbidden' });
     }
-    if (!ngo.verified) {
+    if (!isVerifiedAt(ngo)) {
       return reply.code(403).send({ error: 'ngo_not_verified' });
     }
 

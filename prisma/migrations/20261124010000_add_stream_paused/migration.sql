@@ -1,0 +1,3 @@
+ALTER TYPE "StreamStatus" ADD VALUE 'PAUSED';
+
+ALTER TABLE "streams" ADD COLUMN "paused_at" TIMESTAMP(3);
