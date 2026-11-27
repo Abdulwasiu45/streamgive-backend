@@ -7,6 +7,9 @@ import { WATCHED_CONTRACT_IDS } from '../indexer/contracts.js';
 import { rebuildEventFromDeadLetter } from '../indexer/deadLetter.js';
 import { dispatchEvent } from '../indexer/dispatch.js';
 import type { ContractEvent, EventHandler } from '../indexer/worker.js';
+import { createScriptLogger } from './logger.js';
+
+const logger = createScriptLogger({ json: process.argv.includes('--json') });
 
 const MAX_ERROR_LENGTH = 2000;
 
@@ -92,10 +95,11 @@ export async function replayDeadLetters(options: ReplayOptions = {}): Promise<Re
 
 async function main(): Promise<void> {
   const report = await replayDeadLetters();
-  console.log(
-    `Replayed ${report.attempted} unresolved dead letter(s): ` +
-      `${report.resolved} resolved, ${report.failed} still failing.`,
-  );
+  logger.info('Replay complete', {
+    attempted: report.attempted,
+    resolved: report.resolved,
+    failed: report.failed,
+  });
 
   if (report.failed > 0) {
     process.exitCode = 1;
@@ -105,7 +109,7 @@ async function main(): Promise<void> {
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   main()
     .catch((error) => {
-      console.error(error);
+      logger.error('Replay failed', { error: String(error) });
       process.exitCode = 1;
     })
     .finally(async () => {
