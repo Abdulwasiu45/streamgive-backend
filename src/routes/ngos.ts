@@ -4,40 +4,16 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 
 import { Prisma } from '../generated/prisma/client.js';
-import { recordAdminAction } from '../audit/adminAudit.js';
 import { prisma } from '../db.js';
 import { sendPublicCacheable } from './cacheable.js';
-import { escapeCsvField } from './donors.js';
-import { requireAdminSignature } from '../middleware/adminAuth.js';
-import { requireOwnerSignature } from '../middleware/ownerAuth.js';
 import { getPublicNgoName } from './ngoName.js';
 import { serializeStream } from './streams.js';
 import { isVerifiedAt } from './ngoVerification.js';
 import { committedTotalsByToken } from './tokenTotals.js';
 
-/** Params for NGO detail, donor, and admin update routes; `id` must be an NGO UUID. */
+/** Params for NGO detail and donor routes; `id` must be an NGO UUID. */
 const idParamSchema = z.object({ id: z.string().uuid() });
 const RECENT_STREAMS_LIMIT = 10;
-const WITHDRAWALS_CSV_BATCH_SIZE = 500;
-const WITHDRAWALS_CSV_HEADERS = [
-  'eventId',
-  'streamId',
-  'tokenAddress',
-  'amount',
-  'ledger',
-  'txHash',
-  'withdrawnAt',
-];
-
-interface WithdrawalRow {
-  id: string;
-  streamId: bigint;
-  tokenAddress: string;
-  amount: string | null;
-  ledger: number;
-  txHash: string;
-  createdAt: Date;
-}
 
 interface NgoListRow {
   id: string;
@@ -49,34 +25,6 @@ interface NgoListRow {
   createdAt: Date;
   updatedAt: Date;
 }
-
-/** Admin update body; optional `displayName` is a string, null to clear, or omitted to preserve. */
-const updateNgoSchema = z.object({
-  displayName: z.string().nullable().optional(),
-});
-
-/**
- * Owner profile update body; enforces the same limits as the NGO application
- * form (`description` 1–5000 trimmed chars, `website` URL max 2048 chars with
- * scheme-less HTTPS normalization, or null to clear website).
- */
-export const updateNgoProfileSchema = z
-  .object({
-    description: z.string().trim().min(1).max(5000).optional(),
-    website: z
-      .union([
-        z.null(),
-        z
-          .string()
-          .trim()
-          .transform((val) => (val && !/^https?:\/\//i.test(val) ? `https://${val}` : val))
-          .pipe(z.string().url().max(2048)),
-      ])
-      .optional(),
-  })
-  .refine((data) => data.description !== undefined || data.website !== undefined, {
-    message: 'At least one of description or website must be provided',
-  });
 
 /** Public directory sort mode: newest, oldest, or name (default newest). */
 const sortSchema = z.enum(['newest', 'oldest', 'name']).default('newest');
@@ -101,16 +49,22 @@ const ngoStreamsQuerySchema = z.object({
   cursor: z.string().uuid().optional(),
 });
 
-const ngoStreamInclude = {
-  donor: { select: { address: true } },
-  ngo: { select: { id: true, name: true, displayName: true, ownerAddress: true } },
-} as const;
-
 /** Donor-list query: `limit` from 1–100 (default 100) and optional donor UUID `cursor`. */
 const donorListQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(100),
   cursor: z.string().uuid().optional(),
 });
+
+/** Lookup query; `address` must be a Stellar G... public key. */
+const lookupQuerySchema = z.object({
+  // Stellar StrKey ed25519 public key: 'G' + 55 base32 (A-Z2-7) chars.
+  address: z.string().regex(/^G[A-Z2-7]{55}$/),
+});
+
+const ngoStreamInclude = {
+  donor: { select: { address: true } },
+  ngo: { select: { id: true, name: true, displayName: true, ownerAddress: true } },
+} as const;
 
 function committedAmount(stream: {
   status: 'ACTIVE' | 'PAUSED' | 'CANCELLED';
@@ -121,28 +75,6 @@ function committedAmount(stream: {
     ? BigInt(stream.withdrawn)
     : BigInt(stream.balance) + BigInt(stream.withdrawn);
 }
-
-/** Lookup query; `address` must be a Stellar G... public key. */
-const lookupQuerySchema = z.object({
-  // Stellar StrKey ed25519 public key: 'G' + 55 base32 (A-Z2-7) chars.
-  address: z.string().regex(/^G[A-Z2-7]{55}$/),
-});
-
-/**
- * Admin directory query: `limit` from 1–100 (default 100), optional NGO UUID
- * `cursor`, and optional `verified` string (`true` or `false`).
- */
-const adminListQuerySchema = z.object({
-  limit: z.coerce.number().int().min(1).max(100).default(100),
-  cursor: z.string().uuid().optional(),
-  // Optional boolean filter as a query string (so 'true'/'false' arrive as
-  // strings); omitted means "everything, verified or not".
-  verified: z
-    .enum(['true', 'false'])
-    .optional()
-    .transform((v) => (v === undefined ? undefined : v === 'true')),
-  q: z.string().max(100).optional(),
-});
 
 /** Builds the GET /ngos/:id response shape from a unique Prisma `where`. */
 async function findNgoDetail(where: { id: string } | { ownerAddress: string }) {
@@ -310,55 +242,6 @@ export async function ngoRoutes(app: FastifyInstance): Promise<void> {
     return sendPublicCacheable(request, reply, { ngos, nextCursor });
   });
 
-  // Admin counterpart to GET /ngos above: also returns the unverified rows
-  // the indexer creates (a `register` event, or a stream to an address that
-  // never registered) — exactly what an admin needs to spot streams pointed
-  // at NGOs that aren't in the public directory. Optionally narrowed with
-  // ?verified=true|false.
-  /**
-   * Lists all NGOs, including unverified entries, for admin review.
-   * @route GET /v1/ngos/all
-   * @query limit, cursor, verified
-   * @auth Admin signature required via `x-admin-address`, `x-admin-timestamp`, and `x-admin-signature`.
-   * @returns 200 `{ ngos: Ngo[], nextCursor: string | null }`; 400 `{ error: "invalid_request", details }`.
-   */
-  app.get('/ngos/all', { preHandler: requireAdminSignature }, async (request, reply) => {
-    const parsedQuery = adminListQuerySchema.safeParse(request.query);
-    if (!parsedQuery.success) {
-      return reply
-        .code(400)
-        .send({ error: 'invalid_request', details: parsedQuery.error.flatten() });
-    }
-    const { limit, cursor, verified, q } = parsedQuery.data;
-    const searchTerm = q?.trim() || undefined;
-
-    const where: Prisma.NgoWhereInput = {
-      ...(verified === undefined ? {} : { verified }),
-      ...(searchTerm
-        ? {
-            OR: [
-              { name: { contains: searchTerm, mode: 'insensitive' } },
-              { displayName: { contains: searchTerm, mode: 'insensitive' } },
-              { ownerAddress: { contains: searchTerm, mode: 'insensitive' } },
-            ],
-          }
-        : {}),
-    };
-
-    const rows = await prisma.ngo.findMany({
-      where,
-      orderBy: [{ createdAt: 'desc' }, { id: 'asc' }],
-      take: limit + 1,
-      ...(cursor ? { skip: 1, cursor: { id: cursor } } : {}),
-    });
-
-    const hasMore = rows.length > limit;
-    const ngos = hasMore ? rows.slice(0, limit) : rows;
-    const nextCursor = hasMore ? ngos[ngos.length - 1].id : null;
-
-    return { ngos, nextCursor };
-  });
-
   /**
    * Finds a public NGO profile by Stellar owner address.
    * @route GET /v1/ngos/lookup
@@ -519,189 +402,4 @@ export async function ngoRoutes(app: FastifyInstance): Promise<void> {
 
     return sendPublicCacheable(request, reply, ngo);
   });
-
-  /**
-   * Updates or clears the NGO's public display name.
-   * @route PATCH /v1/admin/ngos/:id
-   * @param id NGO UUID
-   * @body `{ displayName?: string | null }`
-   * @auth Admin signature required via `x-admin-address`, `x-admin-timestamp`, and `x-admin-signature`.
-   * @returns 200 updated NGO with its effective public `name`; 400 invalid params/body; 404 `{ error: "not_found" }`.
-   */
-  app.patch('/admin/ngos/:id', { preHandler: requireAdminSignature }, async (request, reply) => {
-    const parsedParams = idParamSchema.safeParse(request.params);
-    if (!parsedParams.success) {
-      return reply.code(400).send({ error: 'invalid_request' });
-    }
-
-    const parsedBody = updateNgoSchema.safeParse(request.body);
-    if (!parsedBody.success) {
-      return reply
-        .code(400)
-        .send({ error: 'invalid_request', details: parsedBody.error.flatten() });
-    }
-
-    const ngo = await prisma.ngo.findUnique({ where: { id: parsedParams.data.id } });
-    if (!ngo) {
-      return reply.code(404).send({ error: 'not_found' });
-    }
-
-    const adminAddress = request.headers['x-admin-address'];
-    if (typeof adminAddress !== 'string') {
-      return reply.code(401).send({ error: 'unauthorized' });
-    }
-
-    const updated = await prisma.$transaction(async (tx) => {
-      const result = await tx.ngo.update({
-        where: { id: ngo.id },
-        data: { displayName: parsedBody.data.displayName },
-      });
-      await recordAdminAction(
-        tx,
-        adminAddress,
-        'ngo.display_name.updated',
-        ngo.id,
-        'Updated NGO display name override',
-      );
-      return result;
-    });
-
-    return { ...updated, name: updated.displayName || updated.name };
-  });
-
-  /**
-   * Lets a verified NGO owner update the NGO's public description and website.
-   * @route PATCH /v1/ngos/:id/profile
-   * @param id NGO UUID
-   * @body `{ description?: string, website?: string | null }`
-   * @auth Owner signature required via `x-owner-address`, `x-owner-timestamp`, and `x-owner-signature`.
-   */
-  app.patch('/ngos/:id/profile', { preHandler: requireOwnerSignature }, async (request, reply) => {
-    const ownerAddress = request.headers['x-owner-address'];
-    if (typeof ownerAddress !== 'string') {
-      return reply.code(401).send({ error: 'unauthorized' });
-    }
-
-    const parsedParams = idParamSchema.safeParse(request.params);
-    if (!parsedParams.success) {
-      return reply.code(400).send({ error: 'invalid_request' });
-    }
-
-    const parsedBody = updateNgoProfileSchema.safeParse(request.body);
-    if (!parsedBody.success) {
-      return reply
-        .code(400)
-        .send({ error: 'invalid_request', details: parsedBody.error.flatten() });
-    }
-
-    const ngo = await prisma.ngo.findUnique({ where: { id: parsedParams.data.id } });
-    if (!ngo) {
-      return reply.code(404).send({ error: 'not_found' });
-    }
-    if (ngo.ownerAddress !== ownerAddress) {
-      return reply.code(403).send({ error: 'forbidden' });
-    }
-    if (!isVerifiedAt(ngo)) {
-      return reply.code(403).send({ error: 'ngo_not_verified' });
-    }
-
-    const updated = await prisma.ngo.update({
-      where: { id: ngo.id },
-      data: {
-        ...(parsedBody.data.description !== undefined
-          ? { description: parsedBody.data.description }
-          : {}),
-        ...(parsedBody.data.website !== undefined ? { website: parsedBody.data.website } : {}),
-        profileUpdatedAt: new Date(),
-      },
-    });
-
-    return { ...updated, name: getPublicNgoName(updated) || null };
-  });
-
-  /**
-   * Exports an NGO's withdrawals as a formula-safe CSV, streamed in batches.
-   * @route GET /v1/ngos/:id/withdrawals.csv
-   * @param id NGO UUID
-   * @auth Owner signature required via `x-owner-address`, `x-owner-timestamp`, and `x-owner-signature`.
-   * @returns 200 CSV stream; 400 invalid id; 401 unauthorized; 403 `{ error: "forbidden" }` when the signer is not the owner; 404 `{ error: "not_found" }`.
-   */
-  app.get(
-    '/ngos/:id/withdrawals.csv',
-    { preHandler: requireOwnerSignature },
-    async (request, reply) => {
-      const ownerAddress = request.headers['x-owner-address'];
-      if (typeof ownerAddress !== 'string') {
-        return reply.code(401).send({ error: 'unauthorized' });
-      }
-
-      const parsedParams = idParamSchema.safeParse(request.params);
-      if (!parsedParams.success) {
-        return reply.code(400).send({ error: 'invalid_request' });
-      }
-
-      const ngo = await prisma.ngo.findUnique({ where: { id: parsedParams.data.id } });
-      if (!ngo) {
-        return reply.code(404).send({ error: 'not_found' });
-      }
-      if (ngo.ownerAddress !== ownerAddress) {
-        return reply.code(403).send({ error: 'forbidden' });
-      }
-
-      reply.header('content-type', 'text/csv; charset=utf-8');
-      reply.header(
-        'content-disposition',
-        `attachment; filename="ngo-${ngo.id}-withdrawals.csv"`,
-      );
-
-      const csv = Readable.from(
-        (async function* () {
-          yield `${WITHDRAWALS_CSV_HEADERS.map(escapeCsvField).join(',')}\r\n`;
-          let cursor: { ledger: number; id: string } | undefined;
-
-          while (true) {
-            const rows: WithdrawalRow[] = await prisma.$queryRaw<WithdrawalRow[]>(Prisma.sql`
-              SELECT e.id,
-                     e.stream_id AS "streamId",
-                     s.token_address AS "tokenAddress",
-                     e.payload->>'accrued' AS "amount",
-                     e.ledger,
-                     e.tx_hash AS "txHash",
-                     e.created_at AS "createdAt"
-              FROM "stream_events" e
-              JOIN "streams" s ON s.on_chain_id = e.stream_id
-              WHERE s.ngo_id = ${ngo.id}
-                AND e.type = 'withdraw'
-                ${
-                  cursor
-                    ? Prisma.sql`AND (e.ledger, e.id) > (${cursor.ledger}::int, ${cursor.id}::text)`
-                    : Prisma.empty
-                }
-              ORDER BY e.ledger ASC, e.id ASC
-              LIMIT ${WITHDRAWALS_CSV_BATCH_SIZE}
-            `);
-
-            for (const row of rows) {
-              const fields = [
-                row.id,
-                row.streamId.toString(),
-                row.tokenAddress,
-                row.amount ?? '',
-                row.ledger,
-                row.txHash,
-                row.createdAt.toISOString(),
-              ];
-              yield `${fields.map(escapeCsvField).join(',')}\r\n`;
-            }
-
-            const last = rows.at(-1);
-            if (!last || rows.length < WITHDRAWALS_CSV_BATCH_SIZE) break;
-            cursor = { ledger: last.ledger, id: last.id };
-          }
-        })(),
-      );
-
-      return reply.send(csv);
-    },
-  );
 }
