@@ -2,21 +2,24 @@ import { Keypair, StrKey } from '@stellar/stellar-sdk';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 
 import { bodyHash, sep53Hash } from './adminAuth.js';
+import { InMemoryReplayStore, type ReplayStore } from './replayStore.js';
 
 const MAX_CLOCK_SKEW_MS = 5 * 60 * 1000;
 const SECONDS_TIMESTAMP_MAXMAGNI = 100_000_000_000;
 const ED25519_SIGNATURE_BYTES = 64;
 
-const usedOwnerSignatures = new Map<string, number>();
+let ownerReplayStore: ReplayStore = new InMemoryReplayStore();
 
-function pruneUsedOwnerSignatures(now = Date.now()): void {
-  for (const [key, seenAt] of usedOwnerSignatures) {
-    if (now - seenAt > MAX_CLOCK_SKEW_MS) usedOwnerSignatures.delete(key);
-  }
+/**
+ * Replaces the replay store with a custom implementation.
+ *
+ * Tests use this to inject a fresh store per test, and production
+ * deployments can use it to switch from the default in-memory store to
+ * a shared Redis or database-backed store for horizontal scaling.
+ */
+export function setOwnerReplayStore(store: ReplayStore): void {
+  ownerReplayStore = store;
 }
-
-const ownerReplayPruner = setInterval(pruneUsedOwnerSignatures, 60_000);
-ownerReplayPruner.unref();
 
 /**
  * Verifies a SEP-53 Stellar signature from an arbitrary NGO/applicant owner
@@ -83,8 +86,8 @@ export async function requireOwnerSignature(
   }
 
   const replayKey = `${address}:${timestampRaw}:${signature}`;
-  if (usedOwnerSignatures.has(replayKey)) {
+  if (ownerReplayStore.has(replayKey)) {
     return reply.code(401).send({ error: 'replayed_signature' });
   }
-  usedOwnerSignatures.set(replayKey, now);
+  ownerReplayStore.set(replayKey, now);
 }

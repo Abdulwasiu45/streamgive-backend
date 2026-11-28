@@ -9,6 +9,8 @@ import { impactRoutes } from './routes/impact.js';
 import { indexerStatusRoutes } from './routes/indexerStatus.js';
 import { ngoApplicationRoutes } from './routes/ngoApplications.js';
 import { ngoRoutes } from './routes/ngos.js';
+import { ngoAdminRoutes } from './routes/ngosAdmin.js';
+import { ngoOwnerRoutes } from './routes/ngosOwner.js';
 import { deadLetterRoutes } from './routes/deadLetters.js';
 import { notificationEndpointRoutes } from './routes/notificationEndpoints.js';
 import { notificationLogRoutes } from './routes/notificationLogs.js';
@@ -122,6 +124,8 @@ export function buildServer(options?: BuildServerOptions) {
 
   const apiPrefix = { prefix: '/v1' };
   app.register(ngoRoutes, apiPrefix);
+  app.register(ngoAdminRoutes, apiPrefix);
+  app.register(ngoOwnerRoutes, apiPrefix);
   app.register(donorRoutes, apiPrefix);
   app.register(donorEmailAlertRoutes, apiPrefix);
   app.register(streamRoutes, apiPrefix);

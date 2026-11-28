@@ -1,5 +1,8 @@
 import { Keypair } from '@stellar/stellar-sdk';
 import { createHash } from 'node:crypto';
+import { createScriptLogger } from './logger.js';
+
+const logger = createScriptLogger({ json: process.argv.includes('--json') });
 
 const SEP53_PREFIX = 'Stellar Signed Message:\n';
 
@@ -67,4 +70,9 @@ function main(): void {
   console.log(command.join(' '));
 }
 
-main();
+try {
+  main();
+} catch (error) {
+  logger.error('Failed to sign request', { error: String(error) });
+  process.exitCode = 1;
+}

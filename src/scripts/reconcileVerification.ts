@@ -11,6 +11,9 @@ import { pathToFileURL } from 'node:url';
 import { rpcServer } from '../stellar/rpc.js';
 import { NGO_REGISTRY_CONTRACT_ID } from '../indexer/contracts.js';
 import { prisma } from '../db.js';
+import { createScriptLogger } from './logger.js';
+
+const logger = createScriptLogger({ json: process.argv.includes('--json') });
 
 const RPC_CONCURRENCY = 5;
 
@@ -135,29 +138,33 @@ async function main(): Promise<void> {
   const fix = process.argv.includes('--fix');
   const report = await reconcileVerification({ fix });
 
-  console.log(`Checked ${report.checked} NGOs.`);
+  logger.info('Reconciliation complete', { checked: report.checked });
+
   if (report.mismatches.length === 0) {
-    console.log('No verification mismatches found.');
+    logger.info('No verification mismatches found');
     return;
   }
 
   for (const mismatch of report.mismatches) {
-    console.log(
-      `${mismatch.ngoId} (${mismatch.ownerAddress}): DB=${mismatch.dbVerified}, on-chain=${mismatch.onChainVerified}`,
-    );
+    logger.warn('Verification mismatch', {
+      ngoId: mismatch.ngoId,
+      ownerAddress: mismatch.ownerAddress,
+      dbVerified: mismatch.dbVerified,
+      onChainVerified: mismatch.onChainVerified,
+    });
   }
 
   process.exitCode = 1;
   if (fix) {
-    console.log(`Fixed ${report.fixed} mismatches.`);
+    logger.info('Mismatches fixed', { count: report.fixed });
   } else {
-    console.log('Run with --fix to update the DB.');
+    logger.info('Run with --fix to update the DB');
   }
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   main().catch((error) => {
-    console.error(error);
+    logger.error('Reconciliation failed', { error: String(error) });
     process.exitCode = 1;
   });
 }

@@ -2,6 +2,8 @@ import { Keypair } from '@stellar/stellar-sdk';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { createHash } from 'node:crypto';
 
+import { InMemoryReplayStore, type ReplayStore } from './replayStore.js';
+
 const MAX_CLOCK_SKEW_MS = 5 * 60 * 1000;
 
 /** Timestamps are Unix epoch milliseconds (`Date.now()`). A value whose
@@ -25,18 +27,18 @@ const ED25519_SIGNATURE_BYTES = 64;
 // a real wallet's signature.
 const SEP53_PREFIX = 'Stellar Signed Message:\n';
 
-const usedSignatures = new Map<string, number>();
+let replayStore: ReplayStore = new InMemoryReplayStore();
 
-function pruneUsedSignatures(now = Date.now()): void {
-  for (const [key, seenAt] of usedSignatures) {
-    if (now - seenAt > MAX_CLOCK_SKEW_MS) usedSignatures.delete(key);
-  }
+/**
+ * Replaces the replay store with a custom implementation.
+ *
+ * Tests use this to inject a fresh store per test, and production
+ * deployments can use it to switch from the default in-memory store to
+ * a shared Redis or database-backed store for horizontal scaling.
+ */
+export function setAdminReplayStore(store: ReplayStore): void {
+  replayStore = store;
 }
-
-// Keep request handling independent of cache size. The timer is unreferenced
-// so it does not keep a short-lived process (or a test runner) alive.
-const replayCachePruner = setInterval(pruneUsedSignatures, 60_000);
-replayCachePruner.unref();
 
 /** Exported so tests can sign fixtures the same way a real wallet would,
  * rather than re-deriving (and risking drift from) this exact construction. */
@@ -182,7 +184,7 @@ export async function requireAdminSignature(
 
     const replayKey = `${address}:${request.method}:${request.url}:${timestampHeader}`;
     const now = Date.now();
-    if (usedSignatures.has(replayKey)) {
+    if (replayStore.has(replayKey)) {
       reply.code(401).send({ error: 'replayed_signature' });
       return;
     }
@@ -204,7 +206,7 @@ export async function requireAdminSignature(
       reply.code(401).send({ error: 'unauthorized' });
       return;
     }
-    usedSignatures.set(replayKey, now);
+    replayStore.set(replayKey, now);
   } catch (err) {
     request.log.warn({ err }, 'admin signature check threw');
     reply.code(401).send({ error: 'unauthorized' });

@@ -3,6 +3,9 @@ import 'dotenv/config';
 import { pathToFileURL } from 'node:url';
 
 import { prisma } from '../db.js';
+import { createScriptLogger } from './logger.js';
+
+const logger = createScriptLogger({ json: process.argv.includes('--json') });
 
 export type StreamStatusValue = 'ACTIVE' | 'PAUSED' | 'CANCELLED';
 
@@ -141,17 +144,22 @@ async function main(): Promise<void> {
   const report = await rebuildStreams({ dryRun });
 
   for (const { onChainId, stored, rebuilt } of report.differences) {
-    console.log(
-      `stream ${onChainId}: stored ${JSON.stringify(stored)}, from events ${JSON.stringify(rebuilt)}`,
-    );
+    logger.info('Stream difference detected', {
+      streamId: onChainId,
+      stored,
+      rebuilt,
+    });
   }
   if (report.skipped.length > 0) {
-    console.log(`No created event for stream(s): ${report.skipped.join(', ')}`);
+    logger.warn('Streams without created event', { streams: report.skipped.join(', ') });
   }
-  console.log(
-    `Checked ${report.checked} stream(s): ${report.differences.length} differ, ` +
-      (dryRun ? 'dry run, nothing changed.' : `${report.updated} updated.`),
-  );
+
+  const mode = dryRun ? 'dry run, nothing changed' : `${report.updated} updated`;
+  logger.info('Rebuild complete', {
+    checked: report.checked,
+    differences: report.differences.length,
+    mode,
+  });
 
   // A dry run doubles as a consistency check.
   if (dryRun && report.differences.length > 0) {
@@ -162,7 +170,7 @@ async function main(): Promise<void> {
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   main()
     .catch((error) => {
-      console.error(error);
+      logger.error('Rebuild failed', { error: String(error) });
       process.exitCode = 1;
     })
     .finally(async () => {
