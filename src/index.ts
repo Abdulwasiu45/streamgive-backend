@@ -3,17 +3,52 @@
 // before anything else is imported.
 import 'dotenv/config';
 
+import { parseConfig, parseShutdownTimeoutMs } from './config.js';
 import { dispatchEvent } from './indexer/dispatch.js';
 import { startIndexer } from './indexer/worker.js';
+import { logger } from './logger.js';
+import { startWebhookDeliveryWorker } from './notifications/webhookDeliveryWorker.js';
+import { startStreamRunningLowWorker } from './notifications/streamRunningLowWorker.js';
 import { buildServer } from './server.js';
 
-const port = Number(process.env.PORT ?? 3000);
-const app = buildServer();
+function fail(message: string): never {
+  // Print every configuration problem at once rather than a stack trace from listen().
+  process.stderr.write(`${message}\n`);
+  logger.error({ message }, 'Configuration Error');
+  process.exit(1);
+}
+
+const config = (() => {
+  try {
+    return parseConfig(process.env);
+  } catch (err) {
+    fail(err instanceof Error ? err.message : String(err));
+  }
+})();
+
+const port = config.PORT;
+const shutdownTimeoutMs = (() => {
+  try {
+    return parseShutdownTimeoutMs(process.env.SHUTDOWN_TIMEOUT_MS);
+  } catch (err) {
+    fail(err instanceof Error ? err.message : String(err));
+  }
+})();
+
+const app = (() => {
+  try {
+    return buildServer();
+  } catch (err) {
+    fail(err instanceof Error ? err.message : String(err));
+  }
+})();
 
 // Left unwrapped so a handler failure propagates: worker.ts's own catch
 // logs it and, crucially, leaves the checkpoint unadvanced so the failed
 // event gets retried on the next poll instead of silently skipped.
 const stopIndexer = startIndexer(dispatchEvent);
+const stopWebhookDeliveryWorker = startWebhookDeliveryWorker();
+const stopStreamRunningLowWorker = startStreamRunningLowWorker(config.STREAM_RUNNING_LOW_DAYS);
 
 /**
  * Tear down the indexer and HTTP server, then resolve. The caller is
@@ -23,30 +58,56 @@ const stopIndexer = startIndexer(dispatchEvent);
  */
 export async function shutdown(signal: string): Promise<void> {
   app.log.info({ signal }, 'shutting down');
-  stopIndexer();
-  await app.close();
+  let running = 'indexer';
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  const cleanup = async () => {
+    await stopIndexer();
+    running = 'webhook delivery worker';
+    await stopWebhookDeliveryWorker();
+    running = 'stream running low worker';
+    await stopStreamRunningLowWorker();
+    running = 'HTTP server and database connections';
+    await app.close();
+  };
+
+  try {
+    await Promise.race([
+      cleanup(),
+      new Promise<never>((_, reject) => {
+        timeout = setTimeout(() => {
+          app.log.error({ signal, timeoutMs: shutdownTimeoutMs, running }, 'shutdown timed out');
+          reject(new Error(`shutdown timed out while waiting for ${running}`));
+        }, shutdownTimeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timeout !== undefined) clearTimeout(timeout);
+  }
 }
 
-// An unhandled promise rejection leaves the process in an unknown state just
-// like an uncaught synchronous exception — tear everything down cleanly and
-// let the orchestrator (Docker / Kubernetes / Render) restart the process.
-process.on('unhandledRejection', (reason) => {
-  app.log.error({ err: reason }, 'unhandled rejection — shutting down');
-  shutdown('unhandledRejection')
-    .catch((err) => app.log.error({ err }, 'error during shutdown'))
+function shutdownAfterFatalError(source: 'unhandledRejection' | 'uncaughtException', err: unknown) {
+  app.log.error({ err }, `${source} — shutting down`);
+  // shutdown() is bounded by SHUTDOWN_TIMEOUT_MS and rejects when cleanup
+  // stalls, so this always reaches process.exit(1).
+  shutdown(source)
+    .catch((shutdownError) => app.log.error({ err: shutdownError }, 'error during shutdown'))
     .finally(() => process.exit(1));
+}
+
+// Either fatal process error leaves the application in an unknown state.
+// Perform the same graceful teardown, bounded by SHUTDOWN_TIMEOUT_MS.
+process.on('unhandledRejection', (reason) => {
+  shutdownAfterFatalError('unhandledRejection', reason);
 });
 
 process.on('uncaughtException', (err) => {
-  app.log.error({ err }, 'uncaught exception');
-  process.exit(1);
+  shutdownAfterFatalError('uncaughtException', err);
 });
 
 app.listen({ port, host: '0.0.0.0' }).catch((err) => {
   app.log.error(err);
   process.exit(1);
 });
-
 
 // SIGTERM is what Docker/Kubernetes send on `docker stop`/pod termination;
 // SIGINT is Ctrl+C locally. Without this, both just kill the process

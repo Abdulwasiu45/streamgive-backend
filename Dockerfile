@@ -6,6 +6,7 @@ WORKDIR /app
 # postinstall `prisma generate`, which needs the schema — is cached across
 # builds unless dependencies or the schema actually change.
 COPY package.json package-lock.json ./
+COPY prisma.config.ts ./
 COPY prisma ./prisma
 RUN npm ci
 
@@ -15,7 +16,9 @@ RUN npm run build
 # ---- runtime: production deps only, non-root, no build tooling ----
 FROM node:22-slim AS runtime
 WORKDIR /app
-ENV NODE_ENV=production
+ARG GIT_COMMIT=unknown
+ARG BUILD_TIME=
+ENV NODE_ENV=production GIT_COMMIT=${GIT_COMMIT} BUILD_TIME=${BUILD_TIME}
 
 RUN addgroup --system --gid 1001 nodejs \
   && adduser --system --uid 1001 --ingroup nodejs streamgive
@@ -31,4 +34,6 @@ COPY --from=build --chown=streamgive:nodejs /app/dist ./dist
 USER streamgive
 
 EXPOSE 3000
+HEALTHCHECK --interval=30s --timeout=3s --start-period=20s --retries=3 \
+  CMD node -e "fetch('http://127.0.0.1:3000/health').then((response) => process.exit(response.ok ? 0 : 1)).catch(() => process.exit(1))"
 CMD ["node", "dist/index.js"]

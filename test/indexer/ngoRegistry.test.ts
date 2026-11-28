@@ -1,12 +1,16 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+
+vi.mock('../../src/notifications/service.js', () => ({ dispatchNotification: vi.fn() }));
 
 import { prisma } from '../../src/db.js';
 import { handleNgoRegistryEvent } from '../../src/indexer/handlers/ngoRegistry.js';
+import { dispatchNotification } from '../../src/notifications/service.js';
 import { fakeAddress, resetDb } from '../helpers/db.js';
 import { addressScVal, makeEvent, stringScVal, symbolScVal } from '../helpers/events.js';
 
 describe('handleNgoRegistryEvent', () => {
   afterEach(async () => {
+    vi.mocked(dispatchNotification).mockClear();
     await resetDb();
   });
 
@@ -29,11 +33,30 @@ describe('handleNgoRegistryEvent', () => {
     expect(streamEvent?.payload).toMatchObject({ ownerAddress: owner, name: 'Red Cross' });
   });
 
+  it('dispatches an ngo_registered notification on a register event', async () => {
+    const owner = fakeAddress('E');
+    const event = makeEvent([symbolScVal('register'), addressScVal(owner)], stringScVal('Oxfam'));
+
+    await handleNgoRegistryEvent(event);
+
+    const ngo = await prisma.ngo.findUnique({ where: { ownerAddress: owner } });
+    expect(ngo).not.toBeNull();
+    expect(dispatchNotification).toHaveBeenCalledTimes(1);
+    expect(dispatchNotification).toHaveBeenCalledWith({
+      type: 'ngo_registered',
+      ownerAddress: owner,
+      ngoId: ngo?.id,
+      eventId: event.id,
+    });
+  });
+
   it('marks an existing NGO verified on an approved event', async () => {
     const owner = fakeAddress('B');
     await prisma.ngo.create({ data: { ownerAddress: owner, name: 'Doctors Without Borders' } });
 
-    await handleNgoRegistryEvent(makeEvent([symbolScVal('approved'), addressScVal(owner)], stringScVal('')));
+    await handleNgoRegistryEvent(
+      makeEvent([symbolScVal('approved'), addressScVal(owner)], stringScVal('')),
+    );
 
     const ngo = await prisma.ngo.findUnique({ where: { ownerAddress: owner } });
     expect(ngo?.verified).toBe(true);
@@ -45,13 +68,35 @@ describe('handleNgoRegistryEvent', () => {
     expect(streamEvent?.payload).toMatchObject({ ownerAddress: owner });
   });
 
+  it('records when an NGO was verified and clears it on revoke', async () => {
+    const owner = fakeAddress('V');
+    await prisma.ngo.create({ data: { ownerAddress: owner, name: 'Water Aid' } });
+    const ledgerClosedAt = '2026-11-01T12:00:00.000Z';
+
+    await handleNgoRegistryEvent(
+      makeEvent([symbolScVal('approved'), addressScVal(owner)], stringScVal(''), {
+        ledgerClosedAt,
+      }),
+    );
+    let ngo = await prisma.ngo.findUnique({ where: { ownerAddress: owner } });
+    expect(ngo?.verifiedAt?.toISOString()).toBe(ledgerClosedAt);
+
+    await handleNgoRegistryEvent(
+      makeEvent([symbolScVal('revoked'), addressScVal(owner)], stringScVal('')),
+    );
+    ngo = await prisma.ngo.findUnique({ where: { ownerAddress: owner } });
+    expect(ngo?.verifiedAt).toBeNull();
+  });
+
   it('is a no-op for an approved event with no matching NGO', async () => {
     const owner = fakeAddress('C');
 
     // Should not throw even though no NGO row exists for this address —
     // updateMany (not update) is exactly for this case.
     await expect(
-      handleNgoRegistryEvent(makeEvent([symbolScVal('approved'), addressScVal(owner)], stringScVal(''))),
+      handleNgoRegistryEvent(
+        makeEvent([symbolScVal('approved'), addressScVal(owner)], stringScVal('')),
+      ),
     ).resolves.not.toThrow();
 
     const ngo = await prisma.ngo.findUnique({ where: { ownerAddress: owner } });
@@ -68,12 +113,62 @@ describe('handleNgoRegistryEvent', () => {
     const owner = fakeAddress('D');
     await prisma.ngo.create({ data: { ownerAddress: owner, name: 'UNICEF' } });
 
-    await handleNgoRegistryEvent(makeEvent([symbolScVal('approved'), addressScVal(owner)], stringScVal('')));
+    await handleNgoRegistryEvent(
+      makeEvent([symbolScVal('approved'), addressScVal(owner)], stringScVal('')),
+    );
     let ngo = await prisma.ngo.findUnique({ where: { ownerAddress: owner } });
     expect(ngo?.verified).toBe(true);
 
-    await handleNgoRegistryEvent(makeEvent([symbolScVal('revoked'), addressScVal(owner)], stringScVal('')));
+    const txHash = '1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef';
+    const event = makeEvent([symbolScVal('revoked'), addressScVal(owner)], stringScVal(''), {
+      txHash,
+    });
+    await handleNgoRegistryEvent(event);
     ngo = await prisma.ngo.findUnique({ where: { ownerAddress: owner } });
     expect(ngo?.verified).toBe(false);
+
+    // A StreamEvent row must be written atomically with the ngo update.
+    const streamEvent = await prisma.streamEvent.findFirst({ where: { type: 'revoked' } });
+    expect(streamEvent).not.toBeNull();
+    expect(streamEvent?.streamId).toBeNull();
+    expect(streamEvent?.ledger).toBe(100);
+    expect(streamEvent?.txHash).toBe(txHash);
+    expect(streamEvent?.payload).toMatchObject({ ownerAddress: owner });
+  });
+
+  it('dispatches ngo_approved notification for approved event', async () => {
+    const owner = fakeAddress('F');
+    await prisma.ngo.create({ data: { ownerAddress: owner, name: 'Save the Whales' } });
+
+    const event = makeEvent([symbolScVal('approved'), addressScVal(owner)], stringScVal(''));
+    await handleNgoRegistryEvent(event);
+
+    const ngo = await prisma.ngo.findUnique({ where: { ownerAddress: owner } });
+    expect(ngo?.verified).toBe(true);
+
+    expect(dispatchNotification).toHaveBeenCalledWith({
+      type: 'ngo_approved',
+      ownerAddress: owner,
+      ngoId: ngo!.id,
+      eventId: event.id,
+    });
+  });
+
+  it('dispatches ngo_revoked notification for revoked event', async () => {
+    const owner = fakeAddress('G');
+    await prisma.ngo.create({ data: { ownerAddress: owner, name: 'Green Earth', verified: true } });
+
+    const event = makeEvent([symbolScVal('revoked'), addressScVal(owner)], stringScVal(''));
+    await handleNgoRegistryEvent(event);
+
+    const ngo = await prisma.ngo.findUnique({ where: { ownerAddress: owner } });
+    expect(ngo?.verified).toBe(false);
+
+    expect(dispatchNotification).toHaveBeenCalledWith({
+      type: 'ngo_revoked',
+      ownerAddress: owner,
+      ngoId: ngo!.id,
+      eventId: event.id,
+    });
   });
 });

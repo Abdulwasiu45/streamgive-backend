@@ -1,23 +1,28 @@
-import { recordIndexerPosition } from '../metrics.js';
+import {
+  recordIndexerEventDeadLettered,
+  recordIndexerEventProcessed,
+  recordIndexerEventsSkipped,
+  recordIndexerPosition,
+} from '../metrics.js';
+import { DEFAULT_INDEXER_POLL_INTERVAL_MS } from '../config.js';
+import { envInt } from '../config/env.js';
+import { logger } from '../logger.js';
 import { getLatestLedgerSequence, rpcServer } from '../stellar/rpc.js';
 import { getCheckpointState, saveCheckpoint } from './checkpoint.js';
 import { WATCHED_CONTRACT_IDS } from './contracts.js';
 import { recordDeadLetter } from './deadLetter.js';
+import { tryAcquireIndexerLock, type IndexerLock } from './lock.js';
 
-const POLL_INTERVAL_MS = Number(process.env.INDEXER_POLL_INTERVAL_MS ?? 5000);
-const START_LEDGER = process.env.INDEXER_START_LEDGER
-  ? Number(process.env.INDEXER_START_LEDGER)
-  : undefined;
-const MAX_EVENTS_PER_POLL = process.env.INDEXER_MAX_EVENTS_PER_POLL
-  ? Number(process.env.INDEXER_MAX_EVENTS_PER_POLL)
-  : undefined;
-
-if (
-  MAX_EVENTS_PER_POLL !== undefined &&
-  (!Number.isInteger(MAX_EVENTS_PER_POLL) || MAX_EVENTS_PER_POLL < 1)
-) {
-  throw new Error('INDEXER_MAX_EVENTS_PER_POLL must be a positive integer');
-}
+const POLL_INTERVAL_MS = envInt(process.env.INDEXER_POLL_INTERVAL_MS, 'INDEXER_POLL_INTERVAL_MS', {
+  defaultValue: DEFAULT_INDEXER_POLL_INTERVAL_MS,
+  min: 1,
+});
+const START_LEDGER = envInt(process.env.INDEXER_START_LEDGER, 'INDEXER_START_LEDGER', { min: 1 });
+const MAX_EVENTS_PER_POLL = envInt(
+  process.env.INDEXER_MAX_EVENTS_PER_POLL,
+  'INDEXER_MAX_EVENTS_PER_POLL',
+  { min: 1 },
+);
 
 /** Ceiling on the backed-off delay. Reached after ~7 consecutive failures at
  *  the default 5s interval, so a long outage still re-checks the endpoint
@@ -48,6 +53,55 @@ function isLedgerOutOfRange(err: unknown): boolean {
     typeof (err as { message: unknown }).message === 'string' &&
     (err as { message: string }).message.includes('startLedger must be within the ledger range')
   );
+}
+
+/**
+ * Distinguishes permanent event shape, decode, and validation errors from
+ * transient operational errors (e.g. database blips, timeouts, connection drops).
+ *
+ * Permanent errors are dead-lettered and skipped so the checkpoint can advance.
+ * Transient errors are re-thrown so the worker retries them with backoff without
+ * advancing the checkpoint.
+ */
+export function isDecodeOrValidationError(err: unknown): boolean {
+  if (err instanceof TypeError || err instanceof RangeError || err instanceof SyntaxError) {
+    return true;
+  }
+  if (err instanceof Error) {
+    const name = err.name.toLowerCase();
+    if (name.includes('validation') || name.includes('zod') || name.includes('decode')) {
+      return true;
+    }
+    const msg = err.message.toLowerCase();
+    if (
+      msg.includes('transient') ||
+      msg.includes('timeout') ||
+      msg.includes('connection') ||
+      msg.includes('econnrefused') ||
+      msg.includes('database') ||
+      msg.includes('deadlock') ||
+      msg.includes('network') ||
+      msg.includes('econnreset') ||
+      msg.includes('socket') ||
+      msg.includes('service_unavailable')
+    ) {
+      return false;
+    }
+    if (
+      msg.includes('scval') ||
+      msg.includes('xdr') ||
+      msg.includes('strkey') ||
+      msg.includes('decode') ||
+      msg.includes('validation') ||
+      msg.includes('unknown stream') ||
+      msg.includes('not iterable') ||
+      msg.includes('malformed') ||
+      msg.includes('cannot read properties')
+    ) {
+      return true;
+    }
+  }
+  return false;
 }
 
 /**
@@ -131,15 +185,15 @@ export async function pollOnce(handleEvent: EventHandler): Promise<void> {
     }));
   } catch (err: unknown) {
     if (isLedgerOutOfRange(err)) {
-      console.warn(
-        `indexer: checkpoint ${lastProcessedLedger} has aged out of the RPC's` +
-          ` retention window — skipping to ledger ${latestLedger}. Events in` +
-          ` between were missed and will not be indexed.`,
+      logger.warn(
+        { checkpointLedger: lastProcessedLedger, latestLedger },
+        'indexer checkpoint has aged out of the RPC retention window; skipping the unavailable ledger range',
       );
 
       lastProcessedLedger = latestLedger;
       lastProcessedEventId = undefined;
       await saveCheckpoint(lastProcessedLedger);
+      recordIndexerEventsSkipped();
       return;
     }
 
@@ -160,24 +214,22 @@ export async function pollOnce(handleEvent: EventHandler): Promise<void> {
   for (const event of events) {
     try {
       await handleEvent(event);
+      recordIndexerEventProcessed();
     } catch (err: unknown) {
-      // A handler that throws used to pin the checkpoint: the same event
-      // came back on every poll and nothing after it was ever indexed. The
-      // handlers decode event payloads with unchecked casts, so any event
-      // whose shape doesn't match is permanently poisonous — retrying it
-      // will never succeed, it just stops the indexer making progress.
-      // Record it and carry on instead.
-      //
-      // recordDeadLetter() is deliberately left unguarded. If it throws,
-      // the database is unreachable rather than the event being bad, and
-      // letting that propagate leaves the checkpoint unmoved so the event
-      // is retried on the next poll instead of skipped over a blip.
-      console.error(
-        `indexer: event ${event.id} at ledger ${event.ledger} could not be` +
-          ` processed — recording it as a dead letter and skipping it`,
-        err,
-      );
-      await recordDeadLetter(event, err);
+      if (isDecodeOrValidationError(err)) {
+        logger.error(
+          { err, eventId: event.id, ledger: event.ledger },
+          'indexer event could not be processed; recording it as a dead letter and skipping it',
+        );
+        await recordDeadLetter(event, err);
+        recordIndexerEventDeadLettered();
+      } else {
+        logger.error(
+          { err, eventId: event.id, ledger: event.ledger },
+          'indexer handler failed transiently; retrying without advancing checkpoint',
+        );
+        throw err;
+      }
     }
 
     // Saved per-event, not once per batch: several handlers apply relative
@@ -201,8 +253,8 @@ export function startIndexer(handleEvent: EventHandler): () => Promise<void> {
     // Expected on a fresh local setup before contracts are deployed, not a
     // bug — pollOnce() no-ops until at least one contract id is set. Logged
     // once here (rather than every poll) so it's visible without being noisy.
-    console.warn(
-      'indexer: NGO_REGISTRY_CONTRACT_ID and DONATION_VAULT_CONTRACT_ID are both unset — no-op until at least one is set. See ENVIRONMENT.md.',
+    logger.warn(
+      'NGO_REGISTRY_CONTRACT_ID and DONATION_VAULT_CONTRACT_ID are both unset; indexer is idle until one is set',
     );
   }
 
@@ -214,6 +266,7 @@ export function startIndexer(handleEvent: EventHandler): () => Promise<void> {
   let inFlight: Promise<void> | undefined;
   let consecutiveFailures = 0;
   let stopped = false;
+  let indexerLock: IndexerLock | undefined;
 
   function scheduleNextPoll(): void {
     if (stopped) {
@@ -232,6 +285,19 @@ export function startIndexer(handleEvent: EventHandler): () => Promise<void> {
 
     inFlight = (async () => {
       try {
+        if (!indexerLock?.isHeld()) {
+          indexerLock = undefined;
+          const acquiredLock = await tryAcquireIndexerLock();
+          if (!acquiredLock) {
+            return;
+          }
+          if (stopped) {
+            await acquiredLock.release();
+            return;
+          }
+          indexerLock = acquiredLock;
+        }
+
         await pollOnce(handleEvent);
         consecutiveFailures = 0;
         consecutivePollFailures = 0;
@@ -240,15 +306,18 @@ export function startIndexer(handleEvent: EventHandler): () => Promise<void> {
         consecutivePollFailures += 1;
 
         if (consecutivePollFailures >= INDEXER_FAILURE_ESCALATION_THRESHOLD) {
-          console.error('indexer poll failure threshold exceeded', {
-            consecutiveFailures: consecutivePollFailures,
-            error: err,
-          });
+          logger.error(
+            { consecutiveFailures: consecutivePollFailures, err },
+            'indexer poll failure threshold exceeded',
+          );
         } else {
-          console.error(
-            `indexer poll failed (${consecutiveFailures} in a row) — ` +
-              `retrying in ${backoffDelayMs(consecutiveFailures)}ms`,
-            err,
+          logger.error(
+            {
+              consecutiveFailures,
+              retryDelayMs: backoffDelayMs(consecutiveFailures),
+              err,
+            },
+            'indexer poll failed; retrying with backoff',
           );
         }
       } finally {
@@ -264,5 +333,10 @@ export function startIndexer(handleEvent: EventHandler): () => Promise<void> {
     stopped = true;
     clearTimeout(timer);
     await inFlight;
+    if (indexerLock) {
+      const lock = indexerLock;
+      indexerLock = undefined;
+      await lock.release();
+    }
   };
 }

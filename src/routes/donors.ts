@@ -1,8 +1,17 @@
+import { Readable } from 'node:stream';
+
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 
 import { prisma } from '../db.js';
+import { sendPublicCacheable } from './cacheable.js';
+import { committedTotalsByToken } from './tokenTotals.js';
 
+/**
+ * Query for GET /v1/donors: `sort` is committed or withdrawn (default
+ * committed), `order` is asc or desc (default desc), `limit` is 1–100
+ * (default 100), and `cursor` is an optional donor UUID.
+ */
 const querySchema = z.object({
   sort: z.enum(['committed', 'withdrawn']).default('committed'),
   order: z.enum(['asc', 'desc']).default('desc'),
@@ -11,11 +20,45 @@ const querySchema = z.object({
 });
 
 // Stellar StrKey ed25519 public key: 'G' + 55 base32 (A-Z2-7) chars.
+/** Params for GET /v1/donors/:address; `address` must match a Stellar G... public key. */
 const addressParamSchema = z.object({
   address: z.string().regex(/^G[A-Z2-7]{55}$/),
 });
+const STREAMS_CSV_BATCH_SIZE = 500;
+
+/** Query for GET /v1/donors/:address/activity: `limit` is 1–100 (default 100), `cursor` an event UUID. */
+const activityQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(100).default(100),
+  cursor: z.string().uuid().optional(),
+});
+
+/**
+ * Helper to escape a value for CSV with RFC 4180 rules and formula injection protection.
+ */
+export function escapeCsvField(value: unknown): string {
+  if (value === null || value === undefined) {
+    return '';
+  }
+  let str = String(value);
+  // Formula-safe: if string starts with dangerous characters, prefix with single quote
+  if (/^[=+\-@\t\r]/.test(str)) {
+    str = `'${str}`;
+  }
+  // If field contains quotes, commas, or newlines, wrap in quotes and escape internal quotes
+  if (str.includes('"') || str.includes(',') || str.includes('\n') || str.includes('\r')) {
+    return `"${str.replace(/"/g, '""')}"`;
+  }
+  return str;
+}
 
 export async function donorRoutes(app: FastifyInstance): Promise<void> {
+  /**
+   * Lists donors ranked by committed or withdrawn amount.
+   * @route GET /v1/donors
+   * @query sort, order, limit, cursor
+   * @auth Public
+   * @returns 200 `{ donors: DonorWithTotals[], nextCursor: string | null }`; 400 `{ error: "invalid_request" }` for invalid query or cursor.
+   */
   app.get('/donors', async (request, reply) => {
     const parsedQuery = querySchema.safeParse(request.query);
     if (!parsedQuery.success) {
@@ -27,7 +70,7 @@ export async function donorRoutes(app: FastifyInstance): Promise<void> {
     const { sort, order, limit, cursor } = parsedQuery.data;
     const rows = await prisma.donor.findMany({
       include: {
-        streams: { select: { balance: true, withdrawn: true, status: true } },
+        streams: { select: { balance: true, withdrawn: true, status: true, tokenAddress: true } },
       },
     });
 
@@ -43,6 +86,7 @@ export async function donorRoutes(app: FastifyInstance): Promise<void> {
             0n,
           )
           .toString(),
+        committedByToken: committedTotalsByToken(streams),
         totalWithdrawn: streams
           .reduce((sum, stream) => sum + BigInt(stream.withdrawn), 0n)
           .toString(),
@@ -68,14 +112,21 @@ export async function donorRoutes(app: FastifyInstance): Promise<void> {
     const hasMore = page.length > limit;
     const donors = hasMore ? page.slice(0, limit) : page;
 
-    return {
+    return sendPublicCacheable(request, reply, {
       donors,
       nextCursor: hasMore ? donors[donors.length - 1].id : null,
-    };
+    });
   });
 
   // Per-donor summary so the dashboard (and other clients) can show donor
   // stats without paging through every stream and summing in the browser.
+  /**
+   * Returns one donor's aggregate giving statistics.
+   * @route GET /v1/donors/:address
+   * @param address Stellar public key
+   * @auth Public
+   * @returns 200 donor with decimal-string `totalCommitted` and `totalWithdrawn`, plus `activeStreamCount` and `distinctNgoCount`; 400 invalid address; 404 `{ error: "not_found" }`.
+   */
   app.get('/donors/:address', async (request, reply) => {
     const parsedParams = addressParamSchema.safeParse(request.params);
     if (!parsedParams.success) {
@@ -86,7 +137,13 @@ export async function donorRoutes(app: FastifyInstance): Promise<void> {
       where: { address: parsedParams.data.address },
       include: {
         streams: {
-          select: { ngoId: true, balance: true, withdrawn: true, status: true },
+          select: {
+            ngoId: true,
+            balance: true,
+            withdrawn: true,
+            status: true,
+            tokenAddress: true,
+          },
         },
       },
     });
@@ -112,12 +169,268 @@ export async function donorRoutes(app: FastifyInstance): Promise<void> {
       .reduce((sum, stream) => sum + BigInt(stream.withdrawn), 0n)
       .toString();
 
-    return {
+    return sendPublicCacheable(request, reply, {
       ...rest,
       totalCommitted,
+      committedByToken: committedTotalsByToken(streams),
       totalWithdrawn,
       activeStreamCount: streams.filter((stream) => stream.status === 'ACTIVE').length,
       distinctNgoCount: new Set(streams.map((stream) => stream.ngoId)).size,
-    };
+    });
+  });
+
+  /**
+   * Lists the distinct NGOs a donor supports, with stream counts and committed/withdrawn
+   * totals grouped by token.
+   * @route GET /v1/donors/:address/ngos
+   * @param address Stellar public key
+   * @auth Public
+   * @returns 200 `{ ngos: DonorNgoSummary[] }`; 400 invalid address; 404 `{ error: "not_found" }`.
+   */
+  app.get('/donors/:address/ngos', async (request, reply) => {
+    const parsedParams = addressParamSchema.safeParse(request.params);
+    if (!parsedParams.success) {
+      return reply.code(400).send({ error: 'invalid_request' });
+    }
+
+    const donor = await prisma.donor.findUnique({
+      where: { address: parsedParams.data.address },
+      include: {
+        streams: {
+          include: {
+            ngo: {
+              select: {
+                id: true,
+                name: true,
+                displayName: true,
+                ownerAddress: true,
+                verified: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    if (!donor) {
+      return reply.code(404).send({ error: 'not_found' });
+    }
+
+    const byNgo = new Map<
+      string,
+      {
+        ngoId: string;
+        name: string | null;
+        displayName: string | null;
+        ownerAddress: string;
+        verified: boolean;
+        streamCount: number;
+        activeStreamCount: number;
+        tokens: Map<string, { committed: bigint; withdrawn: bigint }>;
+      }
+    >();
+
+    for (const stream of donor.streams) {
+      let entry = byNgo.get(stream.ngoId);
+      if (!entry) {
+        entry = {
+          ngoId: stream.ngo.id,
+          name: stream.ngo.name,
+          displayName: stream.ngo.displayName,
+          ownerAddress: stream.ngo.ownerAddress,
+          verified: stream.ngo.verified,
+          streamCount: 0,
+          activeStreamCount: 0,
+          tokens: new Map(),
+        };
+        byNgo.set(stream.ngoId, entry);
+      }
+
+      entry.streamCount += 1;
+      if (stream.status === 'ACTIVE') {
+        entry.activeStreamCount += 1;
+      }
+
+      const committed =
+        stream.status === 'CANCELLED'
+          ? BigInt(stream.withdrawn)
+          : BigInt(stream.balance) + BigInt(stream.withdrawn);
+      const withdrawn = BigInt(stream.withdrawn);
+      const existing = entry.tokens.get(stream.tokenAddress) ?? { committed: 0n, withdrawn: 0n };
+      entry.tokens.set(stream.tokenAddress, {
+        committed: existing.committed + committed,
+        withdrawn: existing.withdrawn + withdrawn,
+      });
+    }
+
+    const ngos = [...byNgo.values()]
+      .map(({ tokens, ...ngo }) => ({
+        ...ngo,
+        totalsByToken: [...tokens.entries()]
+          .sort(([left], [right]) => left.localeCompare(right))
+          .map(([tokenAddress, totals]) => ({
+            tokenAddress,
+            committed: totals.committed.toString(),
+            withdrawn: totals.withdrawn.toString(),
+          })),
+      }))
+      .sort((left, right) => left.ngoId.localeCompare(right.ngoId));
+
+    return sendPublicCacheable(request, reply, { ngos });
+  });
+
+  /**
+   * Exports all streams for a donor as a CSV file with formula-safe fields.
+   * @route GET /v1/donors/:address/streams.csv
+   * @param address Stellar public key
+   * @auth Public
+   * @returns 200 CSV stream; 400 invalid address; 404 `{ error: "not_found" }`.
+   */
+  app.get('/donors/:address/streams.csv', async (request, reply) => {
+    const parsedParams = addressParamSchema.safeParse(request.params);
+    if (!parsedParams.success) {
+      return reply.code(400).send({ error: 'invalid_request' });
+    }
+
+    const donor = await prisma.donor.findUnique({
+      where: { address: parsedParams.data.address },
+    });
+
+    if (!donor) {
+      return reply.code(404).send({ error: 'not_found' });
+    }
+
+    const headers = [
+      'id',
+      'onChainId',
+      'ngoId',
+      'ngoName',
+      'ngoAddress',
+      'tokenAddress',
+      'rate',
+      'lastRate',
+      'balance',
+      'withdrawn',
+      'status',
+      'createdTxHash',
+      'createdAt',
+      'updatedAt',
+    ];
+
+    reply.header('content-type', 'text/csv; charset=utf-8');
+    reply.header(
+      'content-disposition',
+      `attachment; filename="donor-${parsedParams.data.address}-streams.csv"`,
+    );
+
+    const csv = Readable.from(
+      (async function* () {
+        yield `${headers.map(escapeCsvField).join(',')}\r\n`;
+        let cursor: string | undefined;
+
+        while (true) {
+          const streams = await prisma.stream.findMany({
+            where: { donorId: donor.id },
+            orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+            take: STREAMS_CSV_BATCH_SIZE,
+            ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+            include: {
+              ngo: { select: { id: true, name: true, displayName: true, ownerAddress: true } },
+            },
+          });
+
+          if (streams.length === 0) break;
+
+          for (const stream of streams) {
+            const ngoName = stream.ngo.displayName || stream.ngo.name || '';
+            const row = [
+              stream.id,
+              stream.onChainId.toString(),
+              stream.ngoId,
+              ngoName,
+              stream.ngo.ownerAddress,
+              stream.tokenAddress,
+              stream.rate,
+              stream.lastRate ?? '',
+              stream.balance,
+              stream.withdrawn,
+              stream.status,
+              stream.createdTxHash ?? '',
+              stream.createdAt.toISOString(),
+              stream.updatedAt.toISOString(),
+            ];
+            yield `${row.map(escapeCsvField).join(',')}\r\n`;
+          }
+
+          const lastStream = streams.at(-1);
+          if (!lastStream || streams.length < STREAMS_CSV_BATCH_SIZE) break;
+          cursor = lastStream.id;
+        }
+      })(),
+    );
+
+    return reply.send(csv);
+  });
+
+  /**
+   * Lists the stored events of all of a donor's streams in one feed, newest first.
+   * @route GET /v1/donors/:address/activity
+   * @param address Stellar public key
+   * @query limit, cursor (an event id from the previous page's `nextCursor`)
+   * @auth Public
+   * @returns 200 `{ events: StreamEvent[], hasMore: boolean, nextCursor: string | null }` with `streamId` as a string; 400 invalid address, query or unknown cursor; 404 `{ error: "not_found" }` for an unknown donor.
+   */
+  app.get('/donors/:address/activity', async (request, reply) => {
+    const parsedParams = addressParamSchema.safeParse(request.params);
+    const parsedQuery = activityQuerySchema.safeParse(request.query);
+    if (!parsedParams.success || !parsedQuery.success) {
+      return reply.code(400).send({ error: 'invalid_request' });
+    }
+    const { limit, cursor } = parsedQuery.data;
+
+    const donor = await prisma.donor.findUnique({
+      where: { address: parsedParams.data.address },
+      select: { id: true },
+    });
+    if (!donor) {
+      return reply.code(404).send({ error: 'not_found' });
+    }
+
+    // An unknown cursor would silently look like an empty last page.
+    if (cursor) {
+      const cursorEvent = await prisma.streamEvent.findUnique({
+        where: { id: cursor },
+        select: { id: true },
+      });
+      if (!cursorEvent) {
+        return reply.code(400).send({ error: 'invalid_request' });
+      }
+    }
+
+    const streams = await prisma.stream.findMany({
+      where: { donorId: donor.id },
+      select: { onChainId: true },
+    });
+    const rows =
+      streams.length === 0
+        ? []
+        : await prisma.streamEvent.findMany({
+            where: { streamId: { in: streams.map((stream) => stream.onChainId) } },
+            orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+            take: limit + 1,
+            ...(cursor ? { skip: 1, cursor: { id: cursor } } : {}),
+          });
+
+    const hasMore = rows.length > limit;
+    const events = hasMore ? rows.slice(0, limit) : rows;
+
+    return sendPublicCacheable(request, reply, {
+      events: events.map(({ streamId, ...event }) => ({
+        ...event,
+        streamId: streamId === null ? null : streamId.toString(),
+      })),
+      hasMore,
+      nextCursor: hasMore ? (events.at(-1)?.id ?? null) : null,
+    });
   });
 }

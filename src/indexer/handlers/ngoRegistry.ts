@@ -1,8 +1,20 @@
 import { scValToNative } from '@stellar/stellar-sdk';
 
 import { prisma } from '../../db.js';
-import { notify } from '../../notifications/service.js';
+import { dispatchNotification } from '../../notifications/service.js';
 import type { ContractEvent } from '../worker.js';
+
+/** Reads the optional expiry (seconds since the epoch) from an `approved`/`renewed` payload. */
+function parseVerifiedUntil(value: ContractEvent['value']): Date | null {
+  try {
+    const native = scValToNative(value) as unknown;
+    const seconds = typeof native === 'bigint' ? Number(native) : native;
+    if (typeof seconds !== 'number' || !Number.isFinite(seconds) || seconds <= 0) return null;
+    return new Date(seconds * 1000);
+  } catch {
+    return null;
+  }
+}
 
 /**
  * Entry point for all ngo-registry contract events. Handles `register`,
@@ -11,16 +23,23 @@ import type { ContractEvent } from '../worker.js';
  * `register` — emitted when an NGO signs up. Writes: upserts the `ngo` row
  * for the owner address, creating it with `verified: false` or updating its
  * `name` if it already exists. Persists a `StreamEvent` row in the same
- * transaction.
+ * transaction, then emits an `ngo_registered` notification.
  *
  * `approved` — emitted when an admin approves a previously-registered NGO.
- * Writes: sets `verified: true` on the matching `ngo` row via `updateMany`
+ * Writes: sets `verified: true` and `verifiedAt` (the ledger close time) on
+ * the matching `ngo` row via `updateMany`
  * (not `update`, so a stray `approved` seen without a prior `register` —
  * e.g. the indexer started mid-history — doesn't throw). Persists a
  * `StreamEvent` row in the same transaction.
  *
+ * `approved` and `renewed` carry an optional expiry (a u64 of seconds since the
+ * epoch); when present it is stored as `verifiedUntil`, otherwise the
+ * verification has no expiry. `renewed` re-verifies an NGO and replaces the
+ * expiry the same way.
+ *
  * `revoked` — emitted when an admin revokes a previously-approved NGO.
- * Writes: sets `verified: false` on the matching `ngo` row via `updateMany`.
+ * Writes: sets `verified: false` and clears `verifiedAt` on the matching
+ * `ngo` row via `updateMany`.
  *
  * All three ultimately mutate the same `ngos` row — `register` creates it
  * unverified, `approved` flips it to verified, and `revoked` flips it back to
@@ -51,30 +70,50 @@ export async function handleNgoRegistryEvent(event: ContractEvent): Promise<void
         },
       });
     });
+
+    const ngo = await prisma.ngo.findFirst({ where: { ownerAddress }, select: { id: true } });
+    if (ngo) {
+      dispatchNotification({
+        type: 'ngo_registered',
+        ownerAddress,
+        ngoId: ngo.id,
+        eventId: event.id,
+      });
+    }
     return;
   }
 
-  if (topic === 'approved') {
+  if (topic === 'approved' || topic === 'renewed') {
+    const verifiedUntil = parseVerifiedUntil(event.value);
     await prisma.$transaction(async (tx) => {
       await tx.ngo.updateMany({
         where: { ownerAddress },
-        data: { verified: true },
+        data: {
+          verified: true,
+          ...(topic === 'approved' ? { verifiedAt: new Date(event.ledgerClosedAt) } : {}),
+          verifiedUntil,
+        },
       });
 
       await tx.streamEvent.create({
         data: {
-          type: 'approved',
+          type: topic,
           streamId: null,
           ledger: event.ledger,
           txHash: event.txHash,
-          payload: { ownerAddress },
+          payload: { ownerAddress, verifiedUntil: verifiedUntil?.toISOString() ?? null },
         },
       });
     });
 
     const ngo = await prisma.ngo.findFirst({ where: { ownerAddress }, select: { id: true } });
     if (ngo) {
-      await notify({ type: 'ngo_approved', ownerAddress, ngoId: ngo.id, eventId: event.id });
+      dispatchNotification({
+        type: 'ngo_approved',
+        ownerAddress,
+        ngoId: ngo.id,
+        eventId: event.id,
+      });
     }
     return;
   }
@@ -83,7 +122,7 @@ export async function handleNgoRegistryEvent(event: ContractEvent): Promise<void
     await prisma.$transaction(async (tx) => {
       await tx.ngo.updateMany({
         where: { ownerAddress },
-        data: { verified: false },
+        data: { verified: false, verifiedAt: null, verifiedUntil: null },
       });
 
       await tx.streamEvent.create({
@@ -99,7 +138,7 @@ export async function handleNgoRegistryEvent(event: ContractEvent): Promise<void
 
     const ngo = await prisma.ngo.findFirst({ where: { ownerAddress }, select: { id: true } });
     if (ngo) {
-      await notify({ type: 'ngo_revoked', ownerAddress, ngoId: ngo.id, eventId: event.id });
+      dispatchNotification({ type: 'ngo_revoked', ownerAddress, ngoId: ngo.id, eventId: event.id });
     }
   }
 }

@@ -28,8 +28,8 @@ docker compose up -d postgres
 # 3. Install dependencies
 npm install
 
-# 4. Push the Prisma schema onto the development database
-npm run db:push
+# 4. Apply Prisma migrations to the development database
+npm run db:deploy
 
 # 5. (Optional) Seed sample NGOs, donors and streams
 npm run db:seed          # uses upserts, safe to run more than once
@@ -49,11 +49,12 @@ docker compose up --build
 ## Running the test suite
 
 The integration tests run against a separate `streamgive_test` database that is
-spun up automatically by the Docker Compose file above.
+created automatically by the Docker Compose `postgres` service (the same
+`docker compose up -d postgres` command from the local setup above).
 
 ```bash
 cp .env.test.example .env.test
-npm run db:push:test     # sync the schema onto streamgive_test
+npm run db:deploy:test   # apply migrations onto streamgive_test
 npm test
 ```
 
@@ -62,17 +63,18 @@ npm test
 ## Before opening a pull request
 
 ```bash
-npm run lint
-npm run typecheck
-npm test
+npm run check
 ```
 
-All three must pass with no errors. Then open a PR against `main` and link the
-relevant issue.
+Lint, type checking, formatting, and tests must all pass with no errors. Then
+open a PR against `main` and link the relevant issue.
 
-Although the acceptance criteria specifically mention README and `DEPLOYMENT.md`, there is another contradiction in the repository.
+---
 
-`CONTRIBUTING.md` currently tells developers:
+## Dependency Audit Triage
 
-```bash
-npm run db:push
+The `Dependency Audit` workflow runs `npm audit --omit=dev --audit-level=high` weekly and whenever `package.json` or `package-lock.json` changes. If the job fails:
+
+1. Run `npm audit --omit=dev` locally to inspect the advisory ID, affected package path, and patched version range.
+2. Run `npm audit fix --omit=dev` (or update the direct dependency in `package.json`) if a non-breaking patch is available, then run `npm run lint`, `npm run typecheck`, and `npm test`.
+3. If the advisory requires a major upgrade or has no upstream fix yet, verify whether the vulnerable code path is reachable in production, open a tracking issue with the GHSA link, and coordinate the upgrade or mitigation in a dedicated PR.

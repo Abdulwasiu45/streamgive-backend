@@ -2,7 +2,8 @@ import { scValToNative } from '@stellar/stellar-sdk';
 
 import { prisma } from '../../db.js';
 import { logger } from '../../logger.js';
-import { notify } from '../../notifications/service.js';
+import { dispatchNotification } from '../../notifications/service.js';
+import { recordDeadLetter } from '../deadLetter.js';
 import type { ContractEvent } from '../worker.js';
 
 type DonationDb = Pick<typeof prisma, 'donor' | 'ngo' | 'stream'>;
@@ -28,6 +29,27 @@ async function ensureNgo(db: DonationDb, ownerAddress: string) {
   });
 }
 
+const MAX_MEMO_LENGTH = 256;
+
+/** The optional memo of a `created` event: a non-empty string or UTF-8 bytes, capped at 256 characters. */
+function parseMemo(value: unknown): string | null {
+  const text =
+    typeof value === 'string'
+      ? value
+      : value instanceof Uint8Array
+        ? Buffer.from(value).toString('utf8')
+        : '';
+  return text === '' ? null : text.slice(0, MAX_MEMO_LENGTH);
+}
+
+/** The optional delayed start of a `created` event: seconds since the epoch, or null when absent or zero. */
+function parseStartsAt(value: unknown): Date | null {
+  const seconds = typeof value === 'bigint' ? Number(value) : value;
+  return typeof seconds === 'number' && Number.isFinite(seconds) && seconds > 0
+    ? new Date(seconds * 1000)
+    : null;
+}
+
 /**
  * Handles the donation-vault contract's `created` event, emitted when a
  * donor opens a new streaming donation to an NGO.
@@ -42,13 +64,19 @@ async function handleStreamCreated(event: ContractEvent): Promise<void> {
   const [, streamIdVal] = event.topic;
   const onChainId = scValToNative(streamIdVal) as bigint;
 
-  const [donorVal, ngoVal, tokenVal, depositVal, rateVal] = scValToNative(event.value) as [
+  const [donorVal, ngoVal, tokenVal, depositVal, rateVal, memoVal, startVal] = scValToNative(
+    event.value,
+  ) as [
     { toString(): string },
     { toString(): string },
     { toString(): string },
     bigint,
     bigint,
+    unknown?,
+    unknown?,
   ];
+  const memo = parseMemo(memoVal);
+  const startsAt = parseStartsAt(startVal);
 
   const { ngo } = await prisma.$transaction(async (tx) => {
     const [donor, ngo] = await Promise.all([
@@ -67,6 +95,9 @@ async function handleStreamCreated(event: ContractEvent): Promise<void> {
         balance: depositVal.toString(),
         withdrawn: '0',
         status: 'ACTIVE',
+        createdTxHash: event.txHash,
+        memo,
+        startsAt,
         createdAt: new Date(event.ledgerClosedAt),
       },
       update: {},
@@ -84,6 +115,8 @@ async function handleStreamCreated(event: ContractEvent): Promise<void> {
           token: tokenVal.toString(),
           deposit: depositVal.toString(),
           rate: rateVal.toString(),
+          memo,
+          startsAt: startsAt?.toISOString() ?? null,
         },
       },
     });
@@ -91,7 +124,7 @@ async function handleStreamCreated(event: ContractEvent): Promise<void> {
     return { ngo };
   });
 
-  await notify({
+  dispatchNotification({
     type: 'stream_created',
     eventId: event.id,
     streamId: onChainId.toString(),
@@ -107,7 +140,7 @@ async function handleStreamCreated(event: ContractEvent): Promise<void> {
  * Writes: updates the matching `stream` row, subtracting the accrued
  * amount from `balance` and adding it to `withdrawn`. Persists a
  * `StreamEvent` row in the same transaction. No-ops if the stream isn't
- * known yet. Emits a `stream_withdrawn` notification.
+ * known yet or if it is already cancelled. Emits a `stream_withdrawn` notification.
  *
  * Withdraw's event payload is just the accrued amount, so the new balance
  * and withdrawn total are fully determined by it — no ambiguity.
@@ -117,23 +150,40 @@ async function handleWithdraw(event: ContractEvent): Promise<void> {
   const onChainId = scValToNative(streamIdVal) as bigint;
   const accrued = scValToNative(event.value) as bigint;
 
-  const stream = await prisma.stream.findUnique({ where: { onChainId } });
-  if (!stream) return;
-
-  const balance = BigInt(stream.balance);
-  const nextBalance = balance - accrued;
-  if (nextBalance < 0n) {
-    logger.warn(
-      {
-        onChainId: onChainId.toString(),
-        balance: balance.toString(),
-        accrued: accrued.toString(),
-      },
-      'withdraw exceeds recorded stream balance',
-    );
-  }
+  let shouldNotify = false;
 
   await prisma.$transaction(async (tx) => {
+    const stream = await tx.stream.findUnique({ where: { onChainId } });
+    if (!stream) {
+      logger.warn(
+        { eventId: event.id, streamId: onChainId.toString() },
+        'withdraw event received for unknown stream',
+      );
+      await recordDeadLetter(event, new Error(`unknown stream: ${onChainId}`));
+      return;
+    }
+
+    if (stream.status === 'CANCELLED') {
+      logger.warn(
+        { eventId: event.id, streamId: onChainId.toString() },
+        'ignoring withdraw event for cancelled stream',
+      );
+      return;
+    }
+
+    const balance = BigInt(stream.balance);
+    const nextBalance = balance - accrued;
+    if (nextBalance < 0n) {
+      logger.warn(
+        {
+          onChainId: onChainId.toString(),
+          balance: balance.toString(),
+          accrued: accrued.toString(),
+        },
+        'withdraw exceeds recorded stream balance',
+      );
+    }
+
     await tx.stream.update({
       where: { onChainId },
       data: {
@@ -152,14 +202,18 @@ async function handleWithdraw(event: ContractEvent): Promise<void> {
         payload: { accrued: accrued.toString() },
       },
     });
+
+    shouldNotify = true;
   });
 
-  await notify({
-    type: 'stream_withdrawn',
-    eventId: event.id,
-    streamId: onChainId.toString(),
-    amount: accrued.toString(),
-  });
+  if (shouldNotify) {
+    dispatchNotification({
+      type: 'stream_withdrawn',
+      eventId: event.id,
+      streamId: onChainId.toString(),
+      amount: accrued.toString(),
+    });
+  }
 }
 
 /**
@@ -170,7 +224,7 @@ async function handleWithdraw(event: ContractEvent): Promise<void> {
  * Writes: updates the matching `stream` row — adds the settled amount to
  * `withdrawn`, zeroes `balance` and `rate`, and sets `status` to
  * `CANCELLED`. Persists a `StreamEvent` row in the same transaction.
- * No-ops if the stream isn't known yet. Emits a `stream_cancelled`
+ * No-ops if the stream isn't known yet or already cancelled. Emits a `stream_cancelled`
  * notification.
  *
  * Cancel's payload carries both the settled amount and the refund, so —
@@ -181,10 +235,27 @@ async function handleCancel(event: ContractEvent): Promise<void> {
   const onChainId = scValToNative(streamIdVal) as bigint;
   const [accrued, refund] = scValToNative(event.value) as [bigint, bigint];
 
-  const stream = await prisma.stream.findUnique({ where: { onChainId } });
-  if (!stream) return;
+  let shouldNotify = false;
 
   await prisma.$transaction(async (tx) => {
+    const stream = await tx.stream.findUnique({ where: { onChainId } });
+    if (!stream) {
+      logger.warn(
+        { eventId: event.id, streamId: onChainId.toString() },
+        'cancel event received for unknown stream',
+      );
+      await recordDeadLetter(event, new Error(`unknown stream: ${onChainId}`));
+      return;
+    }
+
+    if (stream.status === 'CANCELLED') {
+      logger.warn(
+        { eventId: event.id, streamId: onChainId.toString() },
+        'ignoring duplicate cancel event for already cancelled stream',
+      );
+      return;
+    }
+
     await tx.stream.update({
       where: { onChainId },
       data: {
@@ -209,14 +280,125 @@ async function handleCancel(event: ContractEvent): Promise<void> {
         },
       },
     });
+
+    shouldNotify = true;
   });
 
-  await notify({
-    type: 'stream_cancelled',
-    eventId: event.id,
-    streamId: onChainId.toString(),
-    settledToNgo: accrued.toString(),
-    refundToDonor: refund.toString(),
+  if (shouldNotify) {
+    dispatchNotification({
+      type: 'stream_cancelled',
+      eventId: event.id,
+      streamId: onChainId.toString(),
+      settledToNgo: accrued.toString(),
+      refundToDonor: refund.toString(),
+    });
+  }
+}
+
+/**
+ * Handles the donation-vault contract's `pause` event, emitted when a donor
+ * pauses an active stream.
+ *
+ * Writes: sets the matching `stream` row to `PAUSED` and records when in
+ * `pausedAt`, leaving `updatedAt` (the settlement time the remaining-time
+ * calculation counts from) untouched. Persists a `StreamEvent` row in the same
+ * transaction. Idempotent: a replayed event, or one for a stream that is not
+ * `ACTIVE`, changes nothing and writes no second row.
+ */
+async function handlePause(event: ContractEvent): Promise<void> {
+  const [, streamIdVal] = event.topic;
+  const onChainId = scValToNative(streamIdVal) as bigint;
+
+  await prisma.$transaction(async (tx) => {
+    const stream = await tx.stream.findUnique({ where: { onChainId } });
+    if (!stream) {
+      logger.warn(
+        { eventId: event.id, streamId: onChainId.toString() },
+        'pause event received for unknown stream',
+      );
+      await recordDeadLetter(event, new Error(`unknown stream: ${onChainId}`));
+      return;
+    }
+
+    if (stream.status !== 'ACTIVE') {
+      logger.warn(
+        { eventId: event.id, streamId: onChainId.toString(), status: stream.status },
+        'ignoring pause event for a stream that is not active',
+      );
+      return;
+    }
+
+    const pausedAt = new Date(event.ledgerClosedAt);
+    await tx.stream.update({
+      where: { onChainId },
+      data: { status: 'PAUSED', pausedAt, updatedAt: stream.updatedAt },
+    });
+
+    await tx.streamEvent.create({
+      data: {
+        type: 'pause',
+        streamId: onChainId,
+        ledger: event.ledger,
+        txHash: event.txHash,
+        payload: { pausedAt: pausedAt.toISOString() },
+      },
+    });
+  });
+}
+
+/**
+ * Handles the donation-vault contract's `resume` event, emitted when a donor
+ * resumes a paused stream.
+ *
+ * Writes: sets the matching `stream` row back to `ACTIVE`, clears `pausedAt`
+ * and moves `updatedAt` forward by the time spent paused, so the paused period
+ * does not count against the remaining time. Persists a `StreamEvent` row in
+ * the same transaction. Idempotent: a replayed event, or one for a stream that
+ * is not `PAUSED`, changes nothing and writes no second row.
+ */
+async function handleResume(event: ContractEvent): Promise<void> {
+  const [, streamIdVal] = event.topic;
+  const onChainId = scValToNative(streamIdVal) as bigint;
+
+  await prisma.$transaction(async (tx) => {
+    const stream = await tx.stream.findUnique({ where: { onChainId } });
+    if (!stream) {
+      logger.warn(
+        { eventId: event.id, streamId: onChainId.toString() },
+        'resume event received for unknown stream',
+      );
+      await recordDeadLetter(event, new Error(`unknown stream: ${onChainId}`));
+      return;
+    }
+
+    if (stream.status !== 'PAUSED') {
+      logger.warn(
+        { eventId: event.id, streamId: onChainId.toString(), status: stream.status },
+        'ignoring resume event for a stream that is not paused',
+      );
+      return;
+    }
+
+    const resumedAt = new Date(event.ledgerClosedAt);
+    const pausedMs = stream.pausedAt ? Math.max(0, resumedAt.getTime() - stream.pausedAt.getTime()) : 0;
+    await tx.stream.update({
+      where: { onChainId },
+      data: {
+        status: 'ACTIVE',
+        pausedAt: null,
+        updatedAt: new Date(stream.updatedAt.getTime() + pausedMs),
+      },
+    });
+
+    await tx.streamEvent.create({
+      data: {
+        type: 'resume',
+        streamId: onChainId,
+        ledger: event.ledger,
+        txHash: event.txHash,
+        payload: { resumedAt: resumedAt.toISOString(), pausedMs },
+      },
+    });
   });
 }
 
@@ -224,7 +406,8 @@ async function handleCancel(event: ContractEvent): Promise<void> {
  * Entry point for all donation-vault contract events. Dispatches on the
  * event's topic to the handler for that on-chain event:
  * `created` → {@link handleStreamCreated}, `withdraw` → {@link handleWithdraw},
- * `cancel` → {@link handleCancel}. `topup` and `ratemod` are deliberately
+ * `cancel` → {@link handleCancel}, `pause` → {@link handlePause}, `resume` →
+ * {@link handleResume}. `topup` and `ratemod` are deliberately
  * unhandled for now (see comment below); any other topic is ignored.
  */
 export async function handleDonationVaultEvent(event: ContractEvent): Promise<void> {
@@ -240,6 +423,14 @@ export async function handleDonationVaultEvent(event: ContractEvent): Promise<vo
       break;
     case 'cancel':
       await handleCancel(event);
+      break;
+    case 'pause':
+    case 'paused':
+      await handlePause(event);
+      break;
+    case 'resume':
+    case 'resumed':
+      await handleResume(event);
       break;
     case 'topup':
     case 'ratemod':

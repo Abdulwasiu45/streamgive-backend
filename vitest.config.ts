@@ -1,13 +1,57 @@
-import { defineConfig } from 'vitest/config';
+import { configDefaults, defineConfig } from 'vitest/config';
+
+const unitTests = [
+  'test/cacheable.test.ts',
+  'test/compression.test.ts',
+  'test/config.test.ts',
+  'test/middleware/ownerAuthReplayCache.test.ts',
+  'test/startupConfig.test.ts',
+  'test/cors.test.ts',
+  'test/slowRequestLog.test.ts',
+  'test/metrics.test.ts',
+  'test/requestId.test.ts',
+  'test/security-headers.test.ts',
+  'test/shutdown.test.ts',
+  'test/withTimeout.test.ts',
+  'test/routes/serializeStream.test.ts',
+  'test/routes/escapeCsvField.test.ts',
+  'test/scripts/replayDeadLetters.test.ts',
+  'test/scripts/rebuildStreams.test.ts',
+];
 
 export default defineConfig({
   test: {
-    environment: 'node',
-    setupFiles: ['./test/setup.ts'],
-    testTimeout: 20000,
-    hookTimeout: 20000,
-    // Integration tests share one Postgres test DB and reset it between
-    // tests — running files in parallel would race on that shared state.
-    fileParallelism: false,
+    coverage: {
+      provider: 'v8',
+      include: ['src/**/*.ts'],
+      exclude: ['src/generated/**'],
+      reporter: ['text-summary'],
+      thresholds: { lines: 25, statements: 25, functions: 20, branches: 15 },
+    },
+    projects: [
+      {
+        extends: true,
+        test: {
+          name: 'unit',
+          include: unitTests,
+          environment: 'node',
+          testTimeout: 10000,
+          hookTimeout: 10000,
+        },
+      },
+      {
+        extends: true,
+        test: {
+          name: 'integration',
+          include: ['test/**/*.test.ts'],
+          exclude: [...configDefaults.exclude, ...unitTests],
+          environment: 'node',
+          setupFiles: ['./test/setup.ts'],
+          testTimeout: 20000,
+          hookTimeout: 20000,
+          fileParallelism: false,
+        },
+      },
+    ],
   },
 });

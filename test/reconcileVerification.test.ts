@@ -1,9 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-const simulateTransaction = vi.fn();
+const { simulateTransaction, scValToNative } = vi.hoisted(() => ({
+  simulateTransaction: vi.fn(),
+  scValToNative: vi.fn(),
+}));
 
 vi.mock('../src/stellar/rpc.js', () => ({
-  rppServer: {
+  rpcServer: {
     simulateTransaction(args: unknown) {
       return simulateTransaction(args);
     },
@@ -20,7 +23,9 @@ vi.mock('../src/db.js', () => ({
   },
 }));
 
-const scvToXDr = vi.fn();
+vi.mock('../src/indexer/contracts.js', () => ({
+  NGO_REGISTRY_CONTRACT_ID: 'test-contract',
+}));
 
 vi.mock('@stellar/stellar-sdk', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@stellar/stellar-sdk')>();
@@ -32,23 +37,21 @@ vi.mock('@stellar/stellar-sdk', async (importOriginal) => {
         return { type: 'invokeHostFunction' };
       }
     },
+    Account: class {},
+    Keypair: { random: () => ({ publicKey: () => 'source-address' }) },
+    nativeToScVal: vi.fn((value: unknown) => value),
     TransactionBuilder: class {
       addOperation() {
         return this;
       }
-      setNetwork() {
+      setTimeout() {
         return this;
       }
       build() {
         return {};
       }
     },
-    StellarSDx: {
-      xdr: {
-        isSimulationError: (value: unknown) => Boolean(value && (value as { error?: unknown }).error),
-      },
-    },
-    scvToXDr: scvToXDr,
+    scValToNative,
   };
 });
 
@@ -56,18 +59,18 @@ import { reconcileVerification } from '../src/scripts/reconcileVerification.js';
 import { prisma } from '../src/db.js';
 
 beforeEach(() => {
-  viClearAllMocks();
+  vi.clearAllMocks();
 });
 
 describe('reconcileVerification', () => {
   it('reports a mismatch without fixing', async () => {
-    (prisma.ngo.findMany as unknown as { mockResolvedValue: (v: unknown) => void }).mockResolvedValue([
-      { id: 'ngo-1', ownerAddress: 'GAOADRESS', verified: false },
-    ]);
+    (
+      prisma.ngo.findMany as unknown as { mockResolvedValue: (v: unknown) => void }
+    ).mockResolvedValue([{ id: 'ngo-1', ownerAddress: 'GAOADRESS', verified: false }]);
     simulateTransaction.mockResolvedValue({
-      result: { returnValue: { type: 'scvInvoke' } },
+      result: { retval: { type: 'scvInvoke' } },
     });
-    scvToXDr'.mockReturnValue(true);
+    scValToNative.mockReturnValue(true);
 
     const report = await reconcileVerification();
 
@@ -85,14 +88,16 @@ describe('reconcileVerification', () => {
   });
 
   it('fixes mismatches when fix is true', async () => {
-    (prisma.ngo.findMany as unknown as { mockResolvedValue: (v: unknown) => void }).mockResolvedValue([
-      { id: 'ngo-2', ownerAddress: 'GAOADRESS2', verified: true },
-    ]);
+    (
+      prisma.ngo.findMany as unknown as { mockResolvedValue: (v: unknown) => void }
+    ).mockResolvedValue([{ id: 'ngo-2', ownerAddress: 'GAOADRESS2', verified: true }]);
     simulateTransaction.mockResolvedValue({
-      result: { returnValue: { type: 'scvİnvoke' } },
+      result: { retval: { type: 'scvInvoke' } },
     });
-    scvToXDr'.mockReturnValue(false);
-    (prisma.ngo.update as unknown as { mockResolvedValue: (v: unknown) => void }).mockResolvedValue({});
+    scValToNative.mockReturnValue(false);
+    (prisma.ngo.update as unknown as { mockResolvedValue: (v: unknown) => void }).mockResolvedValue(
+      {},
+    );
 
     const report = await reconcileVerification({ fix: true });
 
@@ -103,10 +108,36 @@ describe('reconcileVerification', () => {
     });
   });
 
+  it('limits concurrent RPC calls', async () => {
+    (
+      prisma.ngo.findMany as unknown as { mockResolvedValue: (v: unknown) => void }
+    ).mockResolvedValue(
+      Array.from({ length: 8 }, (_, index) => ({
+        id: `ngo-${index}`,
+        ownerAddress: `G${index}`,
+        verified: true,
+      })),
+    );
+    let inFlight = 0;
+    let maxInFlight = 0;
+    simulateTransaction.mockImplementation(async () => {
+      inFlight += 1;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      inFlight -= 1;
+      return { result: { retval: true } };
+    });
+
+    await reconcileVerification();
+
+    expect(maxInFlight).toBeGreaterThan(1);
+    expect(maxInFlight).toBeLessThanOrEqual(5);
+  });
+
   it('skips ngos that are not registered on-chain', async () => {
-    (prisma.ngo.findMany as unknown as { mockResolvedValue: (v: unknown) => void }).mockResolvedValue([
-      { id: 'ngo-3', ownerAddress: 'GAOADDRESS3', verified: false },
-    ]);
+    (
+      prisma.ngo.findMany as unknown as { mockResolvedValue: (v: unknown) => void }
+    ).mockResolvedValue([{ id: 'ngo-3', ownerAddress: 'GAOADDRESS3', verified: false }]);
     simulateTransaction.mockResolvedValue({ error: 'NotRegistered' });
 
     const report = await reconcileVerification();

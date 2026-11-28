@@ -1,0 +1,4 @@
+ALTER TABLE "ngos"
+  ADD COLUMN IF NOT EXISTS "description" TEXT,
+  ADD COLUMN IF NOT EXISTS "website" TEXT,
+  ADD COLUMN IF NOT EXISTS "profile_updated_at" TIMESTAMP(3);

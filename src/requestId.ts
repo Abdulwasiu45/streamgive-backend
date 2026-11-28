@@ -10,8 +10,17 @@ export const requestIdOptions = {
   genReqId: () => randomUUID(),
 } satisfies Pick<FastifyServerOptions, 'requestIdHeader' | 'genReqId'>;
 
+// Keep caller-provided ids small and log-safe. Restricting characters also
+// prevents control-character injection in response headers and log records.
+const VALID_REQUEST_ID = /^[A-Za-z0-9._-]{1,128}$/;
+
+function safeRequestId(id: string): string {
+  return VALID_REQUEST_ID.test(id) ? id : randomUUID();
+}
+
 export function registerRequestIdHeader(app: FastifyInstance): void {
   app.addHook('onRequest', async (request, reply) => {
+    request.id = safeRequestId(request.id);
     reply.header('x-request-id', request.id);
   });
 }
